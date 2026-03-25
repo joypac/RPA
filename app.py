@@ -49,6 +49,20 @@ st.markdown(
 RESERVAS_FILE = Path("reservas.json")
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 
+# ── Supabase (sincronização na nuvem, opcional) ──────────────────────────────
+USE_SUPABASE = False
+_supabase_client = None
+
+try:
+    from supabase import create_client
+    _url = st.secrets.get("SUPABASE_URL", "")
+    _key = st.secrets.get("SUPABASE_KEY", "")
+    if _url and _key:
+        _supabase_client = create_client(_url, _key)
+        USE_SUPABASE = True
+except Exception:
+    pass
+
 
 def _serialize_value(value):
     if pd.isna(value):
@@ -59,6 +73,17 @@ def _serialize_value(value):
 
 
 def load_reservas():
+    if USE_SUPABASE:
+        try:
+            resp = _supabase_client.table("reservas").select("data").eq("id", 1).execute()
+            if resp.data:
+                data = resp.data[0]["data"]
+                if isinstance(data, list):
+                    return pd.DataFrame(data)
+        except Exception as e:
+            st.error(f"Erro ao carregar do Supabase: {e}")
+        return pd.DataFrame()
+
     if not RESERVAS_FILE.exists():
         return pd.DataFrame()
 
@@ -79,11 +104,24 @@ def save_reservas(df):
         clean_record = {k: _serialize_value(v) for k, v in record.items()}
         records.append(clean_record)
 
+    if USE_SUPABASE:
+        try:
+            _supabase_client.table("reservas").upsert({"id": 1, "data": records}).execute()
+            st.session_state["last_saved_at"] = datetime.now()
+            return
+        except Exception as e:
+            st.error(f"Erro ao guardar no Supabase: {e}")
+
     with RESERVAS_FILE.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
 
 
 def get_last_saved_text():
+    if USE_SUPABASE:
+        last = st.session_state.get("last_saved_at")
+        if last:
+            return last.strftime("%d/%m/%Y %H:%M:%S")
+        return "Ainda não guardado"
     if not RESERVAS_FILE.exists():
         return "Ainda não guardado"
     ts = datetime.fromtimestamp(RESERVAS_FILE.stat().st_mtime)
@@ -480,6 +518,7 @@ if not df_final.empty:
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Confirmar apagar tudo", type="primary"):
+                    save_reservas(pd.DataFrame())
                     if RESERVAS_FILE.exists():
                         RESERVAS_FILE.unlink()
                     st.session_state["current_df"] = pd.DataFrame()
