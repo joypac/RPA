@@ -286,7 +286,7 @@ if "show_overcrowding_ack" not in st.session_state:
 
 top_title_col, top_save_col = st.columns([4, 1])
 with top_title_col:
-    st.markdown("### Gestao de Reservas + Pequenos-Almocos")
+    st.markdown("### Gestão de Reservas + Pequenos-Almoços")
 with top_save_col:
     st.markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
     if st.button("💾 Guardar Agora", use_container_width=True):
