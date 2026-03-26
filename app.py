@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import datetime, timedelta
 import json
 import html
@@ -71,14 +72,15 @@ st.markdown(
 RESERVAS_FILE = Path("reservas.json")
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 DISPLAY_COL_ORDER = [
+    "Alojamento",
     "Nome",
     "Check-in",
     "Check-out",
     "Pessoas",
     "Unidade",
-    "Alojamento",
     "Hora PA",
     "PA pago",
+    "Notas",
 ]
 
 # ── Supabase (sincronização na nuvem, opcional) ──────────────────────────────
@@ -233,7 +235,7 @@ def sanitize_optional_columns(df):
         return df
 
     cleaned = df.copy()
-    for col in ("Hora PA", "PA pago"):
+    for col in ("Hora PA", "PA pago", "Notas"):
         if col in cleaned.columns:
             cleaned[col] = cleaned[col].apply(
                 lambda v: None
@@ -284,18 +286,7 @@ if "pending_overcrowding_messages" not in st.session_state:
 if "show_overcrowding_ack" not in st.session_state:
     st.session_state["show_overcrowding_ack"] = False
 
-top_title_col, top_save_col = st.columns([4, 1])
-with top_title_col:
-    st.markdown("### Gestão de Reservas + Pequenos-Almoços")
-with top_save_col:
-    st.markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
-    if st.button("💾 Guardar Agora", use_container_width=True):
-        current_df = st.session_state.get("current_df", pd.DataFrame())
-        if isinstance(current_df, pd.DataFrame) and not current_df.empty:
-            save_reservas(current_df)
-            st.success("Guardado.")
-        else:
-            st.warning("Sem dados para guardar.")
+st.markdown("### Gestão de Reservas + Pequenos-Almoços")
 
 st.caption(f"Guardado pela última vez: {get_last_saved_text()}")
 
@@ -309,7 +300,7 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.rerun()
 
 tab_reservas, tab_pa, tab_importar, tab_guardar = st.tabs(
-    ["Reservas", "Pequenos almoços", "Importar", "Guardar e Limpar"]
+    ["Reservas", "Pequenos almoços", "Importar", "Limpar"]
 )
 
 uploaded_files = []
@@ -335,12 +326,23 @@ with tab_importar:
             )
 
             try:
+                def limpar_unidade(texto):
+                    import re
+                    if pd.isna(texto):
+                        return texto
+                    # Remove tudo o que estiver entre parênteses (inclusive os parênteses)
+                    texto = re.sub(r"\s*\([^)]*\)", "", str(texto))
+                    # Normaliza espaços múltiplos e vírgulas duplicadas
+                    texto = re.sub(r",\s*,", ",", texto)
+                    texto = re.sub(r",\s*$", "", texto.strip())
+                    return texto.strip()
+
                 df_clean = pd.DataFrame({
                     "Nome": df.iloc[:, 2],
                     "Check-in": df.iloc[:, 3],
                     "Check-out": df.iloc[:, 4],
                     "Pessoas": df.iloc[:, 8],
-                    "Unidade": df.iloc[:, 22],
+                    "Unidade": df.iloc[:, 22].apply(limpar_unidade),
                     "Alojamento": alojamento
                 })
                 all_data.append(df_clean)
@@ -365,15 +367,22 @@ if not df_final.empty:
         df_final["Hora PA"] = None
     if "PA pago" not in df_final.columns:
         df_final["PA pago"] = None
+    if "Notas" not in df_final.columns:
+        df_final["Notas"] = None
 
     ordered_cols = [c for c in DISPLAY_COL_ORDER if c in df_final.columns]
     extra_cols = [c for c in df_final.columns if c not in ordered_cols]
     df_final = df_final[ordered_cols + extra_cols]
 
     with tab_reservas:
-        display_df = sanitize_optional_columns(df_final).fillna("")
+        display_df = sanitize_optional_columns(df_final).copy()
+        # Preenche com "" apenas as colunas não-opcionais;
+        # Hora PA e PA pago ficam como None para o SelectboxColumn funcionar corretamente.
+        _fill_cols = [c for c in display_df.columns if c not in ("Hora PA", "PA pago")]
+        display_df[_fill_cols] = display_df[_fill_cols].fillna("")
         edited_from_table = st.data_editor(
             display_df,
+            key="reservas_editor",
             width='stretch',
             disabled=["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"],
             column_config={
@@ -387,13 +396,34 @@ if not df_final.empty:
                     options=["Sim"],
                     required=False,
                 ),
+                "Notas": st.column_config.TextColumn(
+                    "Notas",
+                    help="Notas internas da reserva",
+                    width="medium",
+                ),
             }
         )
 
-        # Mantém edição direta apenas nas colunas permitidas.
-        df_final["Hora PA"] = edited_from_table["Hora PA"]
-        df_final["PA pago"] = edited_from_table["PA pago"]
+        # Aplica sempre o estado do editor e grava se houver mudanças reais
+        editable_cols = [c for c in ["Hora PA", "PA pago", "Notas"] if c in edited_from_table.columns]
+        
+        # Guarda o estado antes da edição para comparação
+        df_before = df_final[editable_cols].copy()
+        
+        # Aplica o estado do editor
+        for col in editable_cols:
+            df_final[col] = edited_from_table[col]
         df_final = sanitize_optional_columns(df_final)
+        
+        # Compara usando representação em string para evitar problemas com NaN
+        df_after = df_final[editable_cols].copy()
+        before_str = df_before.astype(str).values
+        after_str = df_after.astype(str).values
+        
+        if not (before_str == after_str).all():
+            st.session_state["current_df"] = df_final.copy()
+            st.session_state["reservas_df"] = df_final.copy()
+            save_reservas(df_final)
 
         old_overcrowding = set(build_overcrowding_messages(df_guardado, suggested_times))
         new_overcrowding = set(build_overcrowding_messages(df_final, suggested_times))
@@ -401,6 +431,19 @@ if not df_final.empty:
         if created_overcrowding:
             st.session_state["pending_overcrowding_messages"] = created_overcrowding
             st.session_state["show_overcrowding_ack"] = True
+
+        # Botão discreto para exportar tabela em Excel
+        from io import BytesIO
+        excel_buffer = BytesIO()
+        display_df_export = sanitize_optional_columns(df_final).fillna("")
+        display_df_export.to_excel(excel_buffer, index=False, engine="openpyxl", sheet_name="Reservas")
+        excel_buffer.seek(0)
+        st.download_button(
+            label="📥 Exportar para Excel",
+            data=excel_buffer.getvalue(),
+            file_name="reservas.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
         st.divider()
 
@@ -418,6 +461,7 @@ if not df_final.empty:
 
         current_hora = df_final.loc[reserva_idx, "Hora PA"]
         current_pago = df_final.loc[reserva_idx, "PA pago"]
+        current_notas = df_final.loc[reserva_idx, "Notas"] if "Notas" in df_final.columns else None
 
         hora_options = [""] + suggested_times
         pago_options = ["", "Sim"]
@@ -430,7 +474,9 @@ if not df_final.empty:
         if pago_default not in pago_options:
             pago_default = ""
 
-        c1, c2 = st.columns(2)
+        notas_default = str(current_notas) if pd.notna(current_notas) else ""
+
+        c1, c2, c3 = st.columns([1, 1, 1.5])
         with c1:
             nova_hora = st.selectbox(
                 "Hora PA",
@@ -445,11 +491,19 @@ if not df_final.empty:
                 index=pago_options.index(pago_default),
                 key=f"pa_pago_update_{reserva_idx}",
             )
+        with c3:
+            novas_notas = st.text_input(
+                "Notas",
+                value=notas_default,
+                key=f"notas_update_{reserva_idx}",
+                placeholder="Escrever nota...",
+            )
 
         if st.button("Aplicar alterações à reserva", key="apply_reserva_update"):
             df_before_update = df_final.copy()
             df_final.loc[reserva_idx, "Hora PA"] = nova_hora if nova_hora else None
             df_final.loc[reserva_idx, "PA pago"] = novo_pago if novo_pago else None
+            df_final.loc[reserva_idx, "Notas"] = novas_notas if str(novas_notas).strip() else None
             df_final = sanitize_optional_columns(df_final)
 
             old_overcrowding = set(build_overcrowding_messages(df_before_update, suggested_times))
@@ -466,10 +520,10 @@ if not df_final.empty:
             st.rerun()
 
     edited_df = sanitize_optional_columns(df_final)
-
+    # Atualiza current_df para o botão "Guardar Agora" ter sempre os dados mais recentes.
+    # reservas_df e save_reservas só são chamados quando há edições reais (acima) ou
+    # pelo botão "Aplicar alterações à reserva".
     st.session_state["current_df"] = edited_df.copy()
-    st.session_state["reservas_df"] = edited_df.copy()
-    save_reservas(edited_df)
 
     df_pa = edited_df.copy()
     df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
@@ -499,8 +553,32 @@ if not df_final.empty:
             df_occupation = pd.DataFrame(occupation_data)
             df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
             df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
-            chart_df = df_occupation.set_index("Hora")[["Verde (<16)", "Vermelho (>=16)"]]
-            st.bar_chart(chart_df, color=[THEME["chart_ok"], THEME["chart_over"]])
+
+            chart_long = df_occupation.melt(
+                id_vars=["Hora"],
+                value_vars=["Verde (<16)", "Vermelho (>=16)"],
+                var_name="Faixa",
+                value_name="Total",
+            )
+            occupation_chart = (
+                alt.Chart(chart_long)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
+                    y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
+                    color=alt.Color(
+                        "Faixa:N",
+                        scale=alt.Scale(
+                            domain=["Verde (<16)", "Vermelho (>=16)"],
+                            range=[THEME["chart_ok"], THEME["chart_over"]],
+                        ),
+                        legend=alt.Legend(title=None),
+                    ),
+                    tooltip=["Hora:N", "Faixa:N", "Total:Q"],
+                )
+                .properties(height=280)
+            )
+            st.altair_chart(occupation_chart, use_container_width=True)
 
             for row in occupation_data:
                 if row["Pessoas"] >= 16:
@@ -509,7 +587,33 @@ if not df_final.empty:
             st.divider()
             st.subheader("📋 Lista para Pequenos-Almoços")
 
+            def unidade_curta(valor_unidade):
+                import re
+
+                if pd.isna(valor_unidade):
+                    return ""
+
+                partes = [p.strip() for p in str(valor_unidade).split(",") if p.strip()]
+                resultado = []
+                for parte in partes:
+                    m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+                    if m_quarto:
+                        resultado.append(f"Q{int(m_quarto.group(1))}")
+                        continue
+
+                    m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+                    if m_cama:
+                        resultado.append(f"C{int(m_cama.group(1))}")
+                        continue
+
+                    resultado.append(parte)
+
+                return ", ".join(resultado)
+
             def gerar_lista(df_pa):
+                def nota_valida(v):
+                    return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
+
                 linhas = ["🥐 Pequenos-Almoços\n"]
                 for hora in sorted(df_pa["Hora PA"].unique()):
                     grupo = df_pa[df_pa["Hora PA"] == hora]
@@ -517,19 +621,60 @@ if not df_final.empty:
                     for _, r in grupo.iterrows():
                         nome = r["Nome"]
                         aloj = r["Alojamento"]
-                        unidade = r["Unidade"]
+                        unidade = unidade_curta(r["Unidade"])
                         pax = int(r["Pessoas"])
-                        pago = " (pago)" if str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"] else ""
-                        linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{pago}")
+                        is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
+                        nota = r.get("Notas", None)
+                        nota_texto = str(nota).strip() if nota_valida(nota) else ""
+                        if is_pago and nota_texto:
+                            sufixo = f" (pago; {nota_texto})"
+                        elif is_pago:
+                            sufixo = " (pago)"
+                        elif nota_texto:
+                            sufixo = f" ({nota_texto})"
+                        else:
+                            sufixo = ""
+                        linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
                     linhas.append("")
+
                 return "\n".join(linhas)
+
+            def gerar_lista_md(df_pa):
+                def nota_valida(v):
+                    return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
+
+                linhas = ["**🥐 Pequenos-Almoços**\n"]
+                for hora in sorted(df_pa["Hora PA"].unique()):
+                    grupo = df_pa[df_pa["Hora PA"] == hora]
+                    linhas.append(f"**{hora}h**")
+                    for _, r in grupo.iterrows():
+                        nome = r["Nome"]
+                        aloj = r["Alojamento"]
+                        unidade = unidade_curta(r["Unidade"])
+                        pax = int(r["Pessoas"])
+                        is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
+                        nota = r.get("Notas", None)
+                        nota_texto = str(nota).strip() if nota_valida(nota) else ""
+                        if is_pago and nota_texto:
+                            sufixo = f" (pago; {nota_texto})"
+                        elif is_pago:
+                            sufixo = " (pago)"
+                        elif nota_texto:
+                            sufixo = f" ({nota_texto})"
+                        else:
+                            sufixo = ""
+                        linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
+                    linhas.append("")
+
+                return "\n\n".join(linhas)
 
             lista_texto = gerar_lista(df_pa)
 
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("📄 Gerar lista em texto"):
-                    st.text_area("Lista para imprimir / copiar", lista_texto, height=400)
+                    st.markdown(gerar_lista_md(df_pa))
+                    st.code(lista_texto, language=None)
             with col2:
                 st.download_button(
                     label="⬇️ Descarregar lista (.txt)",
@@ -548,11 +693,6 @@ if not df_final.empty:
                 st.info("Não foram encontradas reservas novas no ficheiro importado.")
 
     with tab_guardar:
-        st.caption("O botão de guardar principal está no topo e fica sempre visível.")
-        if st.button("Guardar agora (neste separador)"):
-            save_reservas(edited_df)
-            st.success("Reservas guardadas com sucesso.")
-
         if "confirm_clear" not in st.session_state:
             st.session_state["confirm_clear"] = False
 
