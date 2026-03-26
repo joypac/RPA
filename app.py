@@ -167,6 +167,7 @@ def save_reservas(df):
 
     with RESERVAS_FILE.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+    st.session_state["last_saved_at"] = datetime.now()
 
 
 def get_last_saved_text():
@@ -174,6 +175,9 @@ def get_last_saved_text():
         last = st.session_state.get("last_saved_at")
         if last:
             return last.strftime("%d/%m/%Y %H:%M:%S")
+        reservas_df = st.session_state.get("reservas_df", pd.DataFrame())
+        if isinstance(reservas_df, pd.DataFrame) and not reservas_df.empty:
+            return "Dados já guardados"
         return "Ainda não guardado"
     if not RESERVAS_FILE.exists():
         return "Ainda não guardado"
@@ -286,6 +290,196 @@ def build_overcrowding_messages(df, suggested_times, threshold=16):
     return messages
 
 
+def format_checkin_checkout(checkin_value, checkout_value):
+    checkin_dt = pd.to_datetime(checkin_value, errors="coerce")
+    checkout_dt = pd.to_datetime(checkout_value, errors="coerce")
+
+    if pd.notna(checkin_dt) and pd.notna(checkout_dt):
+        return f"{checkin_dt.strftime('%d/%m')}-{checkout_dt.strftime('%d/%m')}"
+    if pd.notna(checkin_dt):
+        return checkin_dt.strftime("%d/%m")
+    if pd.notna(checkout_dt):
+        return checkout_dt.strftime("%d/%m")
+    return ""
+
+def _render_reservas_editor_impl(suggested_times):
+    editor_df = sanitize_optional_columns(
+        st.session_state.get("reservas_editor_df", pd.DataFrame()).copy()
+    )
+
+    if editor_df.empty:
+        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+        return
+
+    display_df = editor_df.copy()
+    display_df["Check-in/Check-out"] = display_df.apply(
+        lambda row: format_checkin_checkout(row.get("Check-in"), row.get("Check-out")),
+        axis=1,
+    )
+    display_df = display_df.drop(columns=[c for c in ["Check-in", "Check-out"] if c in display_df.columns])
+    ordered_display_cols = [
+        "Alojamento",
+        "Nome",
+        "Check-in/Check-out",
+        "Pessoas",
+        "Unidade",
+        "Hora PA",
+        "PA pago",
+        "Notas",
+    ]
+    display_df = display_df[[c for c in ordered_display_cols if c in display_df.columns]]
+
+    _fill_cols = [c for c in display_df.columns if c not in ("Hora PA", "PA pago", "Notas")]
+    display_df[_fill_cols] = display_df[_fill_cols].fillna("")
+    edited_from_table = st.data_editor(
+        display_df,
+        key="reservas_editor",
+        width='stretch',
+        disabled=["Nome", "Check-in/Check-out", "Pessoas", "Unidade", "Alojamento"],
+        column_config={
+            "Hora PA": st.column_config.SelectboxColumn(
+                "Hora pequeno-almoço",
+                options=suggested_times,
+                required=False,
+                help="Se ficar vazio/cinzento, significa nenhuma hora definida.",
+            ),
+            "PA pago": st.column_config.SelectboxColumn(
+                "PA pago",
+                options=["Sim"],
+                required=False,
+                help="Se ficar vazio/cinzento, significa Não.",
+            ),
+            "Notas": st.column_config.TextColumn(
+                "Notas",
+                help="Se ficar vazio/cinzento, significa sem nota.",
+                width="medium",
+            ),
+        }
+    )
+
+    st.caption("Na tabela, campos vazios a cinzento significam: nenhuma hora, Não pago e sem nota.")
+
+    editable_cols = [c for c in ["Hora PA", "PA pago", "Notas"] if c in edited_from_table.columns]
+    before_str = editor_df[editable_cols].astype(str).values
+
+    updated_df = editor_df.copy()
+    for col in editable_cols:
+        updated_df[col] = edited_from_table[col]
+    updated_df = sanitize_optional_columns(updated_df)
+
+    after_str = updated_df[editable_cols].astype(str).values
+    if not (before_str == after_str).all():
+        old_overcrowding = set(build_overcrowding_messages(editor_df, suggested_times))
+        new_overcrowding = set(build_overcrowding_messages(updated_df, suggested_times))
+        created_overcrowding = sorted(new_overcrowding - old_overcrowding)
+        if created_overcrowding:
+            st.session_state["pending_overcrowding_messages"] = created_overcrowding
+            st.session_state["show_overcrowding_ack"] = True
+
+        st.session_state["reservas_editor_df"] = updated_df.copy()
+        st.session_state["current_df"] = updated_df.copy()
+        st.session_state["reservas_df"] = updated_df.copy()
+        save_reservas(updated_df)
+        editor_df = updated_df
+
+    from io import BytesIO
+
+    excel_buffer = BytesIO()
+    display_df_export = sanitize_optional_columns(editor_df).fillna("")
+    display_df_export.to_excel(excel_buffer, index=False, engine="openpyxl", sheet_name="Reservas")
+    excel_buffer.seek(0)
+    st.download_button(
+        label="📥 Exportar para Excel",
+        data=excel_buffer.getvalue(),
+        file_name="reservas.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    st.divider()
+
+    select_df = editor_df.reset_index().rename(columns={"index": "_idx"})
+    reserva_idx = st.selectbox(
+        "Selecionar reserva",
+        options=select_df["_idx"].tolist(),
+        format_func=lambda i: (
+            f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Nome'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Nome'].iloc[0]} | "
+            f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Alojamento'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Alojamento'].iloc[0]} "
+            f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]}"
+        ),
+        key="reserva_idx_select",
+    )
+
+    current_hora = editor_df.loc[reserva_idx, "Hora PA"]
+    current_pago = editor_df.loc[reserva_idx, "PA pago"]
+    current_notas = editor_df.loc[reserva_idx, "Notas"] if "Notas" in editor_df.columns else None
+
+    hora_options = ["nenhuma"] + suggested_times
+    pago_options = ["Não", "Sim"]
+
+    hora_default = str(current_hora) if pd.notna(current_hora) else None
+    if hora_default not in hora_options:
+        hora_default = None
+
+    pago_default = str(current_pago) if pd.notna(current_pago) else None
+    if pago_default not in pago_options:
+        pago_default = None
+
+    notas_default = str(current_notas) if pd.notna(current_notas) else ""
+
+    c1, c2, c3 = st.columns([1, 1, 1.5])
+    with c1:
+        nova_hora = st.selectbox(
+            "Hora PA",
+            options=hora_options,
+            index=hora_options.index(hora_default) if hora_default is not None else None,
+            placeholder="nenhuma",
+            key=f"hora_pa_update_{reserva_idx}",
+        )
+    with c2:
+        novo_pago = st.selectbox(
+            "PA pago",
+            options=pago_options,
+            index=pago_options.index(pago_default) if pago_default is not None else None,
+            placeholder="Não",
+            key=f"pa_pago_update_{reserva_idx}",
+        )
+    with c3:
+        novas_notas = st.text_input(
+            "Notas",
+            value=notas_default,
+            key=f"notas_update_{reserva_idx}",
+            placeholder="Escreve uma nota...",
+        )
+
+    if st.button("Aplicar alterações à reserva", key="apply_reserva_update"):
+        df_before_update = editor_df.copy()
+        editor_df.loc[reserva_idx, "Hora PA"] = None if not nova_hora or nova_hora == "nenhuma" else nova_hora
+        editor_df.loc[reserva_idx, "PA pago"] = None if not novo_pago or novo_pago == "Não" else novo_pago
+        editor_df.loc[reserva_idx, "Notas"] = None if not str(novas_notas).strip() or str(novas_notas).strip().lower() == "nenhuma" else novas_notas
+        editor_df = sanitize_optional_columns(editor_df)
+
+        old_overcrowding = set(build_overcrowding_messages(df_before_update, suggested_times))
+        new_overcrowding = set(build_overcrowding_messages(editor_df, suggested_times))
+        created_overcrowding = sorted(new_overcrowding - old_overcrowding)
+        if created_overcrowding:
+            st.session_state["pending_overcrowding_messages"] = created_overcrowding
+            st.session_state["show_overcrowding_ack"] = True
+
+        st.session_state["reservas_editor_df"] = editor_df.copy()
+        st.session_state["current_df"] = editor_df.copy()
+        st.session_state["reservas_df"] = editor_df.copy()
+        save_reservas(editor_df)
+        st.success("Reserva atualizada.")
+        st.rerun()
+
+
+render_reservas_editor = (
+    st.fragment(_render_reservas_editor_impl)
+    if hasattr(st, "fragment")
+    else _render_reservas_editor_impl
+)
+
+
 if "current_df" not in st.session_state:
     st.session_state["current_df"] = pd.DataFrame()
 if "reservas_df" not in st.session_state:
@@ -383,155 +577,12 @@ if not df_final.empty:
     extra_cols = [c for c in df_final.columns if c not in ordered_cols]
     df_final = df_final[ordered_cols + extra_cols]
 
+    st.session_state["reservas_editor_df"] = sanitize_optional_columns(df_final.copy())
+
     with tab_reservas:
-        display_df = sanitize_optional_columns(df_final).copy()
-        # Preenche com "" apenas as colunas não-opcionais;
-        # Hora PA e PA pago ficam como None para o SelectboxColumn funcionar corretamente.
-        _fill_cols = [c for c in display_df.columns if c not in ("Hora PA", "PA pago")]
-        display_df[_fill_cols] = display_df[_fill_cols].fillna("")
-        edited_from_table = st.data_editor(
-            display_df,
-            key="reservas_editor",
-            width='stretch',
-            disabled=["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"],
-            column_config={
-                "Hora PA": st.column_config.SelectboxColumn(
-                    "Hora PA",
-                    options=suggested_times,
-                    required=False,
-                ),
-                "PA pago": st.column_config.SelectboxColumn(
-                    "PA pago",
-                    options=["Sim"],
-                    required=False,
-                ),
-                "Notas": st.column_config.TextColumn(
-                    "Notas",
-                    help="Notas internas da reserva",
-                    width="medium",
-                ),
-            }
-        )
+        render_reservas_editor(suggested_times)
 
-        # Aplica sempre o estado do editor e grava se houver mudanças reais
-        editable_cols = [c for c in ["Hora PA", "PA pago", "Notas"] if c in edited_from_table.columns]
-        
-        # Guarda o estado antes da edição para comparação
-        df_before = df_final[editable_cols].copy()
-        
-        # Aplica o estado do editor
-        for col in editable_cols:
-            df_final[col] = edited_from_table[col]
-        df_final = sanitize_optional_columns(df_final)
-        
-        # Compara usando representação em string para evitar problemas com NaN
-        df_after = df_final[editable_cols].copy()
-        before_str = df_before.astype(str).values
-        after_str = df_after.astype(str).values
-        
-        if not (before_str == after_str).all():
-            st.session_state["current_df"] = df_final.copy()
-            st.session_state["reservas_df"] = df_final.copy()
-            save_reservas(df_final)
-
-        old_overcrowding = set(build_overcrowding_messages(df_guardado, suggested_times))
-        new_overcrowding = set(build_overcrowding_messages(df_final, suggested_times))
-        created_overcrowding = sorted(new_overcrowding - old_overcrowding)
-        if created_overcrowding:
-            st.session_state["pending_overcrowding_messages"] = created_overcrowding
-            st.session_state["show_overcrowding_ack"] = True
-
-        # Botão discreto para exportar tabela em Excel
-        from io import BytesIO
-        excel_buffer = BytesIO()
-        display_df_export = sanitize_optional_columns(df_final).fillna("")
-        display_df_export.to_excel(excel_buffer, index=False, engine="openpyxl", sheet_name="Reservas")
-        excel_buffer.seek(0)
-        st.download_button(
-            label="📥 Exportar para Excel",
-            data=excel_buffer.getvalue(),
-            file_name="reservas.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        st.divider()
-
-        select_df = df_final.reset_index().rename(columns={"index": "_idx"})
-        reserva_idx = st.selectbox(
-            "Selecionar reserva",
-            options=select_df["_idx"].tolist(),
-            format_func=lambda i: (
-                f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Nome'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Nome'].iloc[0]} | "
-                f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Alojamento'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Alojamento'].iloc[0]} "
-                f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]}"
-            ),
-            key="reserva_idx_select",
-        )
-
-        current_hora = df_final.loc[reserva_idx, "Hora PA"]
-        current_pago = df_final.loc[reserva_idx, "PA pago"]
-        current_notas = df_final.loc[reserva_idx, "Notas"] if "Notas" in df_final.columns else None
-
-        hora_options = [""] + suggested_times
-        pago_options = ["", "Sim"]
-
-        hora_default = str(current_hora) if pd.notna(current_hora) else ""
-        if hora_default not in hora_options:
-            hora_default = ""
-
-        pago_default = str(current_pago) if pd.notna(current_pago) else ""
-        if pago_default not in pago_options:
-            pago_default = ""
-
-        notas_default = str(current_notas) if pd.notna(current_notas) else ""
-
-        c1, c2, c3 = st.columns([1, 1, 1.5])
-        with c1:
-            nova_hora = st.selectbox(
-                "Hora PA",
-                options=hora_options,
-                index=hora_options.index(hora_default),
-                key=f"hora_pa_update_{reserva_idx}",
-            )
-        with c2:
-            novo_pago = st.selectbox(
-                "PA pago",
-                options=pago_options,
-                index=pago_options.index(pago_default),
-                key=f"pa_pago_update_{reserva_idx}",
-            )
-        with c3:
-            novas_notas = st.text_input(
-                "Notas",
-                value=notas_default,
-                key=f"notas_update_{reserva_idx}",
-                placeholder="Escrever nota...",
-            )
-
-        if st.button("Aplicar alterações à reserva", key="apply_reserva_update"):
-            df_before_update = df_final.copy()
-            df_final.loc[reserva_idx, "Hora PA"] = nova_hora if nova_hora else None
-            df_final.loc[reserva_idx, "PA pago"] = novo_pago if novo_pago else None
-            df_final.loc[reserva_idx, "Notas"] = novas_notas if str(novas_notas).strip() else None
-            df_final = sanitize_optional_columns(df_final)
-
-            old_overcrowding = set(build_overcrowding_messages(df_before_update, suggested_times))
-            new_overcrowding = set(build_overcrowding_messages(df_final, suggested_times))
-            created_overcrowding = sorted(new_overcrowding - old_overcrowding)
-            if created_overcrowding:
-                st.session_state["pending_overcrowding_messages"] = created_overcrowding
-                st.session_state["show_overcrowding_ack"] = True
-
-            st.session_state["current_df"] = df_final.copy()
-            st.session_state["reservas_df"] = df_final.copy()
-            save_reservas(df_final)
-            st.success("Reserva atualizada.")
-            st.rerun()
-
-    edited_df = sanitize_optional_columns(df_final)
-    # Atualiza current_df para o botão "Guardar Agora" ter sempre os dados mais recentes.
-    # reservas_df e save_reservas só são chamados quando há edições reais (acima) ou
-    # pelo botão "Aplicar alterações à reserva".
+    edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
     st.session_state["current_df"] = edited_df.copy()
 
     df_pa = edited_df.copy()
