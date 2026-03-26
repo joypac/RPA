@@ -341,6 +341,54 @@ def format_checkin_checkout(checkin_value, checkout_value):
         return checkout_dt.strftime("%d/%m")
     return ""
 
+
+ALOJAMENTO_BADGES = {
+    "ABH": "🟥",
+    "AFH": "🟦",
+    "PIPO": "🟩",
+    "DUNAS": "🟨",
+    "DUNAS2": "🟪",
+    "FOZ": "🟧",
+    "ESCAPE": "🟫",
+}
+
+
+def format_alojamento_badge(alojamento_value):
+    if pd.isna(alojamento_value):
+        return "⬜"
+    alojamento_txt = str(alojamento_value).strip()
+    badge = ALOJAMENTO_BADGES.get(alojamento_txt.upper(), "⬜")
+    return f"{badge} {alojamento_txt}" if alojamento_txt else "⬜"
+
+
+def extract_room_tag(unidade_value):
+    import re
+
+    if pd.isna(unidade_value):
+        return ""
+
+    partes = [p.strip() for p in str(unidade_value).split(",") if p.strip()]
+    for parte in partes:
+        m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+        if m_quarto:
+            return f"Q{int(m_quarto.group(1))}"
+
+        m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+        if m_cama:
+            return f"C{int(m_cama.group(1))}"
+
+    return ""
+
+
+def format_nome_com_quarto(nome_value, unidade_value):
+    nome = "" if pd.isna(nome_value) else str(nome_value).strip()
+    room_tag = extract_room_tag(unidade_value)
+    if nome and room_tag:
+        return f"{nome} ({room_tag})"
+    if room_tag:
+        return room_tag
+    return nome
+
 def _render_reservas_editor_impl(suggested_times):
     editor_df = sanitize_optional_columns(
         st.session_state.get("reservas_editor_df", pd.DataFrame()).copy()
@@ -351,6 +399,10 @@ def _render_reservas_editor_impl(suggested_times):
         return
 
     display_df = editor_df.copy()
+    if "Alojamento" in display_df.columns:
+        display_df["Alojamento"] = display_df["Alojamento"].apply(format_alojamento_badge)
+    if "Nome" in display_df.columns:
+        display_df["Nome"] = display_df["Nome"].fillna("")
     display_df["Check-in/Check-out"] = display_df.apply(
         lambda row: format_checkin_checkout(row.get("Check-in"), row.get("Check-out")),
         axis=1,
@@ -359,9 +411,9 @@ def _render_reservas_editor_impl(suggested_times):
     ordered_display_cols = [
         "Alojamento",
         "Nome",
-        "Check-in/Check-out",
-        "Pessoas",
         "Unidade",
+        "Pessoas",
+        "Check-in/Check-out",
         "Hora PA",
         "PA pago",
         "Notas",
@@ -383,13 +435,13 @@ def _render_reservas_editor_impl(suggested_times):
                 help="Se ficar vazio/cinzento, significa nenhuma hora definida.",
             ),
             "PA pago": st.column_config.SelectboxColumn(
-                "PA pago",
+                "PA PAGO",
                 options=["Sim"],
                 required=False,
                 help="Se ficar vazio/cinzento, significa Não.",
             ),
             "Notas": st.column_config.TextColumn(
-                "Notas",
+                "NOTAS",
                 help="Se ficar vazio/cinzento, significa sem nota.",
                 width="medium",
             ),
