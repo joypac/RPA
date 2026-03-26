@@ -2,45 +2,67 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
 import json
+import html
 from pathlib import Path
 
 st.set_page_config(layout="wide")
 
+# Painel central de cores: muda apenas aqui para atualizar todo o visual.
+THEME = {
+    "primary": "#008080",
+    "primary_dark": "#006666",
+    "tab_active": "#ff7f7f",
+    "menu_hover_bg": "#e6f7f7",
+    "alert_bg": "#ffe5e5",
+    "alert_border": "#ff7f7f",
+    "alert_text": "#8a2b2b",
+    "chart_ok": "#00d084",
+    "chart_over": "#e74c3c",
+}
+
 st.markdown(
-        """
+        f"""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
 
-            :root {
-                --primary-color: #d9a11a;
-            }
+            :root {{
+                --primary-color: {THEME['primary']};
+            }}
 
-            html, body, [class*="st-"] {
+            html, body, [class*="st-"] {{
                 font-family: 'Inter', sans-serif;
-            }
+            }}
 
-            button[data-baseweb="tab"] p {
+            button[data-baseweb="tab"] p {{
                 font-size: 1.1rem;
                 font-weight: 700;
-            }
+            }}
 
-            /* Hover/focus em tom amarelo-alaranjado em vez de vermelho */
+            button[data-baseweb="tab"][aria-selected="true"] p {{
+                color: {THEME['tab_active']} !important;
+            }}
+
+            button[data-baseweb="tab"][aria-selected="true"] {{
+                border-bottom-color: {THEME['tab_active']} !important;
+            }}
+
+            /* Hover/focus em tom verde-azulado em vez de vermelho */
             .stButton > button:hover,
-            .stDownloadButton > button:hover {
-                border-color: #d9a11a !important;
-                color: #8a6500 !important;
-            }
+            .stDownloadButton > button:hover {{
+                border-color: {THEME['primary']} !important;
+                color: {THEME['primary_dark']} !important;
+            }}
 
             [data-baseweb="select"]:focus-within,
-            [data-baseweb="input"]:focus-within {
-                box-shadow: 0 0 0 1px #d9a11a !important;
-                border-color: #d9a11a !important;
-            }
+            [data-baseweb="input"]:focus-within {{
+                box-shadow: 0 0 0 1px {THEME['primary']} !important;
+                border-color: {THEME['primary']} !important;
+            }}
 
             div[role="listbox"] ul li:hover,
-            div[role="option"]:hover {
-                background-color: #fff2cc !important;
-            }
+            div[role="option"]:hover {{
+                background-color: {THEME['menu_hover_bg']} !important;
+            }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -48,6 +70,16 @@ st.markdown(
 
 RESERVAS_FILE = Path("reservas.json")
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
+DISPLAY_COL_ORDER = [
+    "Nome",
+    "Check-in",
+    "Check-out",
+    "Pessoas",
+    "Unidade",
+    "Alojamento",
+    "Hora PA",
+    "PA pago",
+]
 
 # ── Supabase (sincronização na nuvem, opcional) ──────────────────────────────
 USE_SUPABASE = False
@@ -72,6 +104,16 @@ def _serialize_value(value):
     return value
 
 
+def show_pink_alert(message):
+    safe_message = html.escape(str(message))
+    st.markdown(
+        f"""
+        <div style=\"background:{THEME['alert_bg']};border-left:5px solid {THEME['alert_border']};color:{THEME['alert_text']};padding:0.85rem 1rem;border-radius:0.5rem;margin:0.35rem 0;\">{safe_message}</div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def load_reservas():
     if USE_SUPABASE:
         try:
@@ -81,7 +123,7 @@ def load_reservas():
                 if isinstance(data, list):
                     return pd.DataFrame(data)
         except Exception as e:
-            st.error(f"Erro ao carregar do Supabase: {e}")
+            show_pink_alert(f"Erro ao carregar do Supabase: {e}")
         return pd.DataFrame()
 
     if not RESERVAS_FILE.exists():
@@ -93,7 +135,7 @@ def load_reservas():
         if isinstance(data, list):
             return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"Erro ao carregar reservas guardadas: {e}")
+        show_pink_alert(f"Erro ao carregar reservas guardadas: {e}")
 
     return pd.DataFrame()
 
@@ -110,7 +152,7 @@ def save_reservas(df):
             st.session_state["last_saved_at"] = datetime.now()
             return
         except Exception as e:
-            st.error(f"Erro ao guardar no Supabase: {e}")
+            show_pink_alert(f"Erro ao guardar no Supabase: {e}")
 
     with RESERVAS_FILE.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
@@ -244,7 +286,7 @@ if "show_overcrowding_ack" not in st.session_state:
 
 top_title_col, top_save_col = st.columns([4, 1])
 with top_title_col:
-    st.title("📊 Gestão de Reservas + Pequenos-Almoços")
+    st.markdown("### Gestao de Reservas + Pequenos-Almocos")
 with top_save_col:
     st.markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
     if st.button("💾 Guardar Agora", use_container_width=True):
@@ -258,9 +300,9 @@ with top_save_col:
 st.caption(f"Guardado pela última vez: {get_last_saved_text()}")
 
 if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overcrowding_messages"]:
-    st.warning("Foram criados horários com sobrelotação. Confirma para continuar.")
+    show_pink_alert("Foram criados horários com sobrelotação. Confirma para continuar.")
     for msg in st.session_state["pending_overcrowding_messages"]:
-        st.warning(msg)
+        show_pink_alert(msg)
     if st.button("OK", key="ack_overcrowding"):
         st.session_state["show_overcrowding_ack"] = False
         st.session_state["pending_overcrowding_messages"] = []
@@ -303,7 +345,7 @@ with tab_importar:
                 })
                 all_data.append(df_clean)
             except Exception as e:
-                st.error(f"Erro no ficheiro {file.name}: {e}")
+                show_pink_alert(f"Erro no ficheiro {file.name}: {e}")
 
 df_guardado = st.session_state["reservas_df"].copy()
 df_final = pd.DataFrame()
@@ -323,6 +365,10 @@ if not df_final.empty:
         df_final["Hora PA"] = None
     if "PA pago" not in df_final.columns:
         df_final["PA pago"] = None
+
+    ordered_cols = [c for c in DISPLAY_COL_ORDER if c in df_final.columns]
+    extra_cols = [c for c in df_final.columns if c not in ordered_cols]
+    df_final = df_final[ordered_cols + extra_cols]
 
     with tab_reservas:
         display_df = sanitize_optional_columns(df_final).fillna("")
@@ -438,7 +484,7 @@ if not df_final.empty:
                 hora = row["Hora PA"]
                 total = int(row["Pessoas"])
                 if total >= 16:
-                    st.warning(f"{hora} → {total} pessoas ⚠️")
+                    show_pink_alert(f"{hora} → {total} pessoas")
                 else:
                     st.success(f"{hora} → {total} pessoas")
                 grupo = df_pa[df_pa["Hora PA"] == hora]
@@ -454,11 +500,11 @@ if not df_final.empty:
             df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
             df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
             chart_df = df_occupation.set_index("Hora")[["Verde (<16)", "Vermelho (>=16)"]]
-            st.bar_chart(chart_df, color=["#00d084", "#e74c3c"])
+            st.bar_chart(chart_df, color=[THEME["chart_ok"], THEME["chart_over"]])
 
             for row in occupation_data:
                 if row["Pessoas"] >= 16:
-                    st.warning(f"⚠️ {row['Hora']} → {int(row['Pessoas'])} pessoas")
+                    show_pink_alert(f"{row['Hora']} → {int(row['Pessoas'])} pessoas")
 
             st.divider()
             st.subheader("📋 Lista para Pequenos-Almoços")
@@ -518,9 +564,10 @@ if not df_final.empty:
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Confirmar apagar tudo", type="primary"):
-                    save_reservas(pd.DataFrame())
-                    if RESERVAS_FILE.exists():
-                        RESERVAS_FILE.unlink()
+                    if USE_SUPABASE:
+                        save_reservas(pd.DataFrame())
+                    else:
+                        st.info("Supabase não ativo. O botão limpar apaga apenas dados da nuvem.")
                     st.session_state["current_df"] = pd.DataFrame()
                     st.session_state["reservas_df"] = pd.DataFrame()
                     st.session_state["pending_overcrowding_messages"] = []
