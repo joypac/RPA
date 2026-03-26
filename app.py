@@ -30,6 +30,8 @@ st.markdown(
                 --primary-color: {THEME['primary']};
             }}
 
+            .stApp {{ background-color: #f8f9fa; }}
+
             html, body, [class*="st-"] {{
                 font-family: 'Inter', sans-serif;
             }}
@@ -63,6 +65,13 @@ st.markdown(
             div[role="listbox"] ul li:hover,
             div[role="option"]:hover {{
                 background-color: {THEME['menu_hover_bg']} !important;
+            }}
+
+            /* Arredondar botões e outros elementos */
+            .stButton > button,
+            .stDownloadButton > button,
+            button[data-baseweb="button"] {{
+                border-radius: 15px !important;
             }}
         </style>
         """,
