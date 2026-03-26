@@ -28,9 +28,28 @@ st.markdown(
 
             :root {{
                 --primary-color: {THEME['primary']};
+                color-scheme: light;
             }}
 
             .stApp {{ background-color: #f8f9fa; }}
+
+            /* Força legibilidade em modo dark/system no telemóvel */
+            html[data-theme="dark"] .stApp,
+            html[data-theme="dark"] [data-testid="stAppViewContainer"],
+            html[data-theme="dark"] [data-testid="stHeader"] {{
+                background-color: #f8f9fa !important;
+            }}
+
+            html[data-theme="dark"] [data-testid="stAppViewContainer"] * {{
+                color: #1f2933 !important;
+            }}
+
+            html[data-theme="dark"] [data-baseweb="input"] input,
+            html[data-theme="dark"] [data-baseweb="select"] > div,
+            html[data-theme="dark"] [data-testid="stDataFrame"] {{
+                background: #ffffff !important;
+                color: #1f2933 !important;
+            }}
 
             html, body, [class*="st-"] {{
                 font-family: 'Inter', sans-serif;
@@ -342,6 +361,16 @@ def format_checkin_checkout(checkin_value, checkout_value):
     return ""
 
 
+def total_pessoas_col(df):
+    if df.empty or "Pessoas" not in df.columns:
+        return 0
+    return int(pd.to_numeric(df["Pessoas"], errors="coerce").fillna(0).sum())
+
+
+def total_hospedes_esta_noite(df, ref_date=None):
+    return total_pessoas_col(df)
+
+
 ALOJAMENTO_BADGES = {
     "ABH": "🟥",
     "AFH": "🟦",
@@ -426,6 +455,7 @@ def _render_reservas_editor_impl(suggested_times):
         display_df,
         key="reservas_editor",
         width='stretch',
+        hide_index=True,
         disabled=["Nome", "Check-in/Check-out", "Pessoas", "Unidade", "Alojamento"],
         column_config={
             "Hora PA": st.column_config.SelectboxColumn(
@@ -470,19 +500,6 @@ def _render_reservas_editor_impl(suggested_times):
         st.session_state["reservas_df"] = updated_df.copy()
         save_reservas(updated_df)
         editor_df = updated_df
-
-    from io import BytesIO
-
-    excel_buffer = BytesIO()
-    display_df_export = sanitize_optional_columns(editor_df).fillna("")
-    display_df_export.to_excel(excel_buffer, index=False, engine="openpyxl", sheet_name="Reservas")
-    excel_buffer.seek(0)
-    st.download_button(
-        label="📥 Exportar para Excel",
-        data=excel_buffer.getvalue(),
-        file_name="reservas.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
 
     st.divider()
 
@@ -560,6 +577,26 @@ def _render_reservas_editor_impl(suggested_times):
         save_reservas(editor_df)
         st.success("Reserva atualizada.")
         st.rerun()
+
+    st.divider()
+    st.subheader("🛏️ Ocupação desta noite")
+    st.metric("Total de hóspedes", total_hospedes_esta_noite(editor_df))
+
+    st.divider()
+    st.caption("Exportação")
+
+    from io import BytesIO
+
+    excel_buffer = BytesIO()
+    display_df_export = sanitize_optional_columns(editor_df).fillna("")
+    display_df_export.to_excel(excel_buffer, index=False, engine="openpyxl", sheet_name="Reservas")
+    excel_buffer.seek(0)
+    st.download_button(
+        label="📥 Exportar para Excel",
+        data=excel_buffer.getvalue(),
+        file_name="reservas.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 
 render_reservas_editor = (
@@ -681,6 +718,7 @@ if not df_final.empty:
         if len(df_pa) > 0:
             df_pa = df_pa.sort_values("Hora PA")
             resumo = df_pa.groupby("Hora PA")["Pessoas"].sum().reset_index()
+            total_pa_dia = total_pessoas_col(df_pa)
 
             st.subheader("📊 Resumo por Hora")
             for _, row in resumo.iterrows():
@@ -732,6 +770,9 @@ if not df_final.empty:
             for row in occupation_data:
                 if row["Pessoas"] >= 16:
                     show_pink_alert(f"{row['Hora']} → {int(row['Pessoas'])} pessoas")
+
+            st.subheader("👥 Total de Pequenos-Almoços (dia)")
+            st.metric("Total de pessoas", total_pa_dia)
 
             st.divider()
             st.subheader("📋 Lista para Pequenos-Almoços")
@@ -786,6 +827,8 @@ if not df_final.empty:
                         linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
                     linhas.append("")
 
+                linhas.append(f"Total de pessoas: {total_pessoas_col(df_pa)}")
+
                 return "\n".join(linhas)
 
             def gerar_lista_md(df_pa):
@@ -814,6 +857,8 @@ if not df_final.empty:
                             sufixo = ""
                         linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
                     linhas.append("")
+
+                linhas.append(f"**Total de pessoas:** {total_pessoas_col(df_pa)}")
 
                 return "\n\n".join(linhas)
 
