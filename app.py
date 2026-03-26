@@ -131,7 +131,30 @@ def load_reservas():
             resp = _supabase_client.table("reservas").select("data").eq("id", 1).execute()
             if resp.data:
                 data = resp.data[0]["data"]
+                if isinstance(data, dict):
+                    last_saved_at = data.get("last_saved_at")
+                    if last_saved_at:
+                        parsed_last_saved_at = pd.to_datetime(last_saved_at, errors="coerce")
+                        if pd.notna(parsed_last_saved_at):
+                            st.session_state["last_saved_at"] = parsed_last_saved_at.to_pydatetime()
+                    reservas = data.get("reservas", [])
+                    if isinstance(reservas, list):
+                        return pd.DataFrame(reservas)
                 if isinstance(data, list):
+                    migrated_at = datetime.now()
+                    st.session_state["last_saved_at"] = migrated_at
+                    try:
+                        _supabase_client.table("reservas").upsert(
+                            {
+                                "id": 1,
+                                "data": {
+                                    "reservas": data,
+                                    "last_saved_at": migrated_at.isoformat(),
+                                },
+                            }
+                        ).execute()
+                    except Exception:
+                        pass
                     return pd.DataFrame(data)
         except Exception as e:
             show_pink_alert(f"Erro ao carregar do Supabase: {e}")
@@ -143,6 +166,15 @@ def load_reservas():
     try:
         with RESERVAS_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
+        if isinstance(data, dict):
+            last_saved_at = data.get("last_saved_at")
+            if last_saved_at:
+                parsed_last_saved_at = pd.to_datetime(last_saved_at, errors="coerce")
+                if pd.notna(parsed_last_saved_at):
+                    st.session_state["last_saved_at"] = parsed_last_saved_at.to_pydatetime()
+            reservas = data.get("reservas", [])
+            if isinstance(reservas, list):
+                return pd.DataFrame(reservas)
         if isinstance(data, list):
             return pd.DataFrame(data)
     except Exception as e:
@@ -157,32 +189,39 @@ def save_reservas(df):
         clean_record = {k: _serialize_value(v) for k, v in record.items()}
         records.append(clean_record)
 
+    saved_at = datetime.now()
+    payload = {
+        "reservas": records,
+        "last_saved_at": saved_at.isoformat(),
+    }
+
     if USE_SUPABASE:
         try:
-            _supabase_client.table("reservas").upsert({"id": 1, "data": records}).execute()
-            st.session_state["last_saved_at"] = datetime.now()
+            _supabase_client.table("reservas").upsert({"id": 1, "data": payload}).execute()
+            st.session_state["last_saved_at"] = saved_at
             return
         except Exception as e:
             show_pink_alert(f"Erro ao guardar no Supabase: {e}")
 
     with RESERVAS_FILE.open("w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
-    st.session_state["last_saved_at"] = datetime.now()
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    st.session_state["last_saved_at"] = saved_at
 
 
 def get_last_saved_text():
-    if USE_SUPABASE:
-        last = st.session_state.get("last_saved_at")
-        if last:
-            return last.strftime("%d/%m/%Y %H:%M:%S")
-        reservas_df = st.session_state.get("reservas_df", pd.DataFrame())
-        if isinstance(reservas_df, pd.DataFrame) and not reservas_df.empty:
-            return "Dados já guardados"
-        return "Ainda não guardado"
-    if not RESERVAS_FILE.exists():
-        return "Ainda não guardado"
-    ts = datetime.fromtimestamp(RESERVAS_FILE.stat().st_mtime)
-    return ts.strftime("%d/%m/%Y %H:%M:%S")
+    last = st.session_state.get("last_saved_at")
+    if last:
+        if isinstance(last, pd.Timestamp):
+            last = last.to_pydatetime()
+        return last.strftime("%d/%m/%Y %H:%M:%S")
+
+    if not USE_SUPABASE:
+        if not RESERVAS_FILE.exists():
+            return "Ainda não guardado"
+        ts = datetime.fromtimestamp(RESERVAS_FILE.stat().st_mtime)
+        return ts.strftime("%d/%m/%Y %H:%M:%S")
+
+    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
 
 def _normalize_key_value(value, column_name):
@@ -356,8 +395,6 @@ def _render_reservas_editor_impl(suggested_times):
             ),
         }
     )
-
-    st.caption("Na tabela, campos vazios a cinzento significam: nenhuma hora, Não pago e sem nota.")
 
     editable_cols = [c for c in ["Hora PA", "PA pago", "Notas"] if c in edited_from_table.columns]
     before_str = editor_df[editable_cols].astype(str).values
