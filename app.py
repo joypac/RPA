@@ -1,4 +1,12 @@
 import streamlit as st
+import streamlit as st
+
+st.set_page_config(
+    page_title="Gestão de Reservas",
+    page_icon="🍳"
+)
+
+
 import pandas as pd
 import altair as alt
 from datetime import datetime, timedelta
