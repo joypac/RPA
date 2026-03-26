@@ -1,11 +1,10 @@
 import streamlit as st
-import streamlit as st
 
 st.set_page_config(
     page_title="Gestão de Reservas",
-    page_icon="🌅"
+    page_icon="🌅",
+    layout="wide",
 )
-
 
 import pandas as pd
 import altair as alt
@@ -13,8 +12,6 @@ from datetime import datetime, timedelta
 import json
 import html
 from pathlib import Path
-
-st.set_page_config(layout="wide")
 
 # Painel central de cores: muda apenas aqui para atualizar todo o visual.
 THEME = {
