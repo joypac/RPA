@@ -1,11 +1,10 @@
 import streamlit as st
-import streamlit as st
 
 st.set_page_config(
     page_title="Gestão de Reservas",
-    page_icon="🌅"
+    page_icon="🌅",
+    layout="wide",
 )
-
 
 import pandas as pd
 import altair as alt
@@ -13,8 +12,6 @@ from datetime import datetime, timedelta
 import json
 import html
 from pathlib import Path
-
-st.set_page_config(layout="wide")
 
 # Painel central de cores: muda apenas aqui para atualizar todo o visual.
 THEME = {
@@ -99,6 +96,27 @@ st.markdown(
             .stDownloadButton > button,
             button[data-baseweb="button"] {{
                 border-radius: 15px !important;
+            }}
+
+            /* Tabela responsiva no telemóvel: scroll horizontal em vez de zoom */
+            @media (max-width: 768px) {{
+                [data-testid="stDataFrame"],
+                [data-testid="stDataEditor"] {{
+                    overflow-x: auto !important;
+                    -webkit-overflow-scrolling: touch !important;
+                    max-width: 100vw !important;
+                }}
+
+                [data-testid="stDataFrame"] > div,
+                [data-testid="stDataEditor"] > div {{
+                    overflow-x: auto !important;
+                }}
+
+                /* Evita que o browser faça zoom-out (que causa desfoque) */
+                iframe[title="streamlit_dataframe"],
+                iframe[title="streamlit_data_editor"] {{
+                    max-width: 100% !important;
+                }}
             }}
         </style>
         """,
@@ -462,7 +480,7 @@ def _render_reservas_editor_impl(suggested_times):
     edited_from_table = st.data_editor(
         display_df,
         key="reservas_editor",
-        width='stretch',
+        use_container_width=True,
         hide_index=True,
         disabled=["Nome", "Check-in/Check-out", "Pessoas", "Unidade", "Alojamento"],
         column_config={
@@ -737,7 +755,7 @@ if not df_final.empty:
                 else:
                     st.success(f"{hora} → {total} pessoas")
                 grupo = df_pa[df_pa["Hora PA"] == hora]
-                st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
+                st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), use_container_width=True)
 
             st.divider()
 
