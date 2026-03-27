@@ -96,6 +96,14 @@ st.markdown(
             button[data-baseweb="button"] {{
                 border-radius: 15px !important;
             }}
+
+            /* No telemóvel, remove o menu flutuante (olho/download/fullscreen) */
+            @media (max-width: 900px) {{
+                [data-testid="stElementToolbar"] {{
+                    display: none !important;
+                    visibility: hidden !important;
+                }}
+            }}
         </style>
         """,
         unsafe_allow_html=True,
