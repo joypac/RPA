@@ -3,5 +3,6 @@ __pycache__/
 .venv/
 .vscode/
 reservas.json
+quartos_disponiveis.json
 .env
 .streamlit/secrets.toml

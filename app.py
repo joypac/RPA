@@ -9,7 +9,7 @@ st.set_page_config(
 
 import pandas as pd
 import altair as alt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import json
 import html
 from pathlib import Path
@@ -106,6 +106,7 @@ st.markdown(
 )
 
 RESERVAS_FILE = Path("reservas.json")
+QUARTOS_FILE = Path("quartos_disponiveis.json")
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 DISPLAY_COL_ORDER = [
     "Alojamento",
@@ -118,6 +119,8 @@ DISPLAY_COL_ORDER = [
     "PA pago",
     "Notas",
 ]
+
+ALOJAMENTOS = ["ABH", "AFH", "PIPO", "DUNAS", "DUNAS2", "FOZ", "ESCAPE", "MARES"]
 
 # ── Supabase (sincronização na nuvem, opcional) ──────────────────────────────
 USE_SUPABASE = False
@@ -138,6 +141,8 @@ def _serialize_value(value):
     if pd.isna(value):
         return None
     if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, date):
         return value.isoformat()
     return value
 
@@ -233,6 +238,21 @@ def save_reservas(df):
     with RESERVAS_FILE.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     st.session_state["last_saved_at"] = saved_at
+
+
+def load_quartos():
+    if not QUARTOS_FILE.exists():
+        return []
+    try:
+        with QUARTOS_FILE.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_quartos(quartos_list):
+    with QUARTOS_FILE.open("w", encoding="utf-8") as f:
+        json.dump(quartos_list, f, ensure_ascii=False, indent=2)
 
 
 def get_last_saved_text():
@@ -379,6 +399,18 @@ def total_hospedes_esta_noite(df, ref_date=None):
     return total_pessoas_col(df)
 
 
+def _existing_date_options(df, column_name):
+    if df.empty or column_name not in df.columns:
+        return []
+
+    parsed = pd.to_datetime(df[column_name], errors="coerce").dropna()
+    if parsed.empty:
+        return []
+
+    unique_dates = sorted({d.date() for d in parsed.tolist()})
+    return unique_dates
+
+
 ALOJAMENTO_BADGES = {
     "ABH": "🟥",
     "AFH": "🟦",
@@ -387,6 +419,18 @@ ALOJAMENTO_BADGES = {
     "DUNAS2": "🟪",
     "FOZ": "🟧",
     "ESCAPE": "🟫",
+    "MARES": "⬛",
+}
+
+ALOJAMENTO_BUTTON_COLORS = {
+    "ABH": "#ef4444",
+    "AFH": "#3b82f6",
+    "PIPO": "#22c55e",
+    "DUNAS": "#facc15",
+    "DUNAS2": "#a855f7",
+    "FOZ": "#fb923c",
+    "ESCAPE": "#92400e",
+    "MARES": "#374151",
 }
 
 
@@ -425,6 +469,289 @@ def format_nome_com_quarto(nome_value, unidade_value):
     if room_tag:
         return room_tag
     return nome
+
+
+def format_quartos_text(unidade_value):
+    if pd.isna(unidade_value):
+        return "Sem quarto definido"
+
+    partes = [p.strip() for p in str(unidade_value).split(",") if p.strip()]
+    if not partes:
+        return "Sem quarto definido"
+
+    quartos = []
+    for parte in partes:
+        import re
+
+        m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+        if m_quarto:
+            quartos.append(f"Quarto {int(m_quarto.group(1))}")
+            continue
+
+        m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+        if m_cama:
+            quartos.append(f"Cama {int(m_cama.group(1))}")
+            continue
+
+        quartos.append(parte)
+
+    return ", ".join(quartos)
+
+
+def _build_quick_access_button_css(alojamentos):
+    css_parts = []
+    for aloj in alojamentos:
+        color = ALOJAMENTO_BUTTON_COLORS.get(str(aloj).upper(), "#9ca3af")
+        css_parts.append(
+            f"""
+            div[data-testid=\"stVerticalBlock\"] div[data-testid=\"stButton\"] button[kind=\"secondary\"][id$=\"quick_aloj_{str(aloj).lower()}\"] {{
+                background-color: {color} !important;
+                color: #ffffff !important;
+                border: 1px solid {color} !important;
+                font-weight: 700 !important;
+            }}
+            """
+        )
+
+    if css_parts:
+        st.markdown(f"<style>{''.join(css_parts)}</style>", unsafe_allow_html=True)
+
+
+def render_quick_access_tab(df, suggested_times):
+    if df.empty:
+        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+        return
+
+    quick_df = sanitize_optional_columns(df.copy())
+    alojamentos = (
+        quick_df["Alojamento"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .replace("", pd.NA)
+        .dropna()
+        .str.upper()
+        .unique()
+        .tolist()
+    )
+    alojamentos = sorted(alojamentos)
+
+    if not alojamentos:
+        st.info("Sem alojamentos disponíveis nas reservas atuais.")
+        return
+
+    if "quick_selected_aloj" not in st.session_state:
+        st.session_state["quick_selected_aloj"] = None
+    if "quick_selected_idx" not in st.session_state:
+        st.session_state["quick_selected_idx"] = None
+
+    if st.session_state["quick_selected_aloj"] not in alojamentos:
+        st.session_state["quick_selected_aloj"] = None
+        st.session_state["quick_selected_idx"] = None
+
+    st.subheader("Acesso rápido para check-ins")
+
+    quartos_hoje = st.session_state.get("quartos_disponiveis", [])
+    if "quick_inserir_quarto_idx" not in st.session_state:
+        st.session_state["quick_inserir_quarto_idx"] = None
+
+    _build_quick_access_button_css(alojamentos)
+
+    selected_aloj = st.session_state["quick_selected_aloj"]
+    selected_idx = st.session_state["quick_selected_idx"]
+
+    # Passo 1: apenas alojamentos
+    if not selected_aloj:
+        cols_aloj = st.columns(min(4, len(alojamentos)))
+        for i, aloj in enumerate(alojamentos):
+            badge = ALOJAMENTO_BADGES.get(aloj, "⬜")
+            with cols_aloj[i % len(cols_aloj)]:
+                if st.button(
+                    f"{badge} {aloj}",
+                    key=f"quick_aloj_{aloj.lower()}",
+                    use_container_width=True,
+                ):
+                    st.session_state["quick_selected_aloj"] = aloj
+                    st.session_state["quick_selected_idx"] = None
+                    st.rerun()
+
+        if quartos_hoje:
+            st.divider()
+            st.markdown("**Quartos disponíveis hoje**")
+            _today = datetime.now().date()
+            _tomorrow = _today + timedelta(days=1)
+            _hora_opts = ["nenhuma"] + build_suggested_times()
+            for _qi, _q in enumerate(quartos_hoje):
+                _badge = ALOJAMENTO_BADGES.get(_q["alojamento"].upper(), "⬜")
+                _preco = _q.get("preco", 0)
+                _preco_str = f"{int(_preco)} €" if _preco == int(_preco) else f"{_preco:.2f} €"
+                _pax_str = f" · {_q['pessoas']} pax" if _q.get("pessoas") else ""
+                _nota_str = f" · {_q['notas']}" if _q.get("notas") else ""
+                _qc1, _qc2 = st.columns([5, 1.5])
+                with _qc1:
+                    st.markdown(f"{_badge} **{_q['alojamento']}** — {_q['unidade']} — {_preco_str}{_pax_str}{_nota_str}")
+                with _qc2:
+                    if st.button("Inserir pessoa", key=f"qins_{_qi}", use_container_width=True):
+                        if st.session_state["quick_inserir_quarto_idx"] == _qi:
+                            st.session_state["quick_inserir_quarto_idx"] = None
+                        else:
+                            st.session_state["quick_inserir_quarto_idx"] = _qi
+                        st.rerun()
+                if st.session_state["quick_inserir_quarto_idx"] == _qi:
+                    with st.form(key=f"qins_form_{_qi}", clear_on_submit=True):
+                        _fi1, _fi2 = st.columns(2)
+                        with _fi1:
+                            _ins_nome = st.text_input("Nome do hóspede")
+                        with _fi2:
+                            _ins_pessoas = st.number_input("Pessoas", min_value=1, step=1, value=int(_q.get("pessoas") or 1))
+                        _fi3, _fi4 = st.columns(2)
+                        with _fi3:
+                            _ins_hora = st.selectbox("Hora PA", options=_hora_opts, index=0)
+                        with _fi4:
+                            _ins_notas = st.text_input("Notas", placeholder="Escreve uma nota...")
+                        _ins_submit = st.form_submit_button("Guardar reserva")
+                    if _ins_submit:
+                        _ins_nome_txt = str(_ins_nome).strip()
+                        if not _ins_nome_txt:
+                            show_pink_alert("Indica o nome do hóspede.")
+                        else:
+                            _base = st.session_state.get("reservas_df", pd.DataFrame()).copy()
+                            _nova = pd.DataFrame([{
+                                "Nome": _ins_nome_txt,
+                                "Alojamento": _q["alojamento"],
+                                "Unidade": _q["unidade"],
+                                "Pessoas": int(_ins_pessoas),
+                                "Check-in": _today,
+                                "Check-out": _tomorrow,
+                                "Hora PA": None if _ins_hora == "nenhuma" else _ins_hora,
+                                "Notas": str(_ins_notas).strip() or None,
+                            }])
+                            _merged, _ = merge_new_reservas(_base, _nova)
+                            _merged = sanitize_optional_columns(_merged)
+                            st.session_state["reservas_df"] = _merged
+                            st.session_state["reservas_editor_df"] = _merged
+                            st.session_state["current_df"] = _merged
+                            save_reservas(_merged)
+                            st.session_state["quartos_disponiveis"].pop(_qi)
+                            save_quartos(st.session_state["quartos_disponiveis"])
+                            st.session_state["quick_inserir_quarto_idx"] = None
+                            st.success(f"{_ins_nome_txt} inserido no {_q['unidade']} ({_q['alojamento']}).")
+                            st.rerun()
+        return
+
+    pessoas_df = quick_df[quick_df["Alojamento"].astype(str).str.upper() == selected_aloj].copy()
+    pessoas_df = pessoas_df.reset_index().rename(columns={"index": "_idx"})
+
+    # Passo 2: apenas nomes do alojamento selecionado
+    if selected_idx is None:
+        ctop1, ctop2 = st.columns([1.5, 4])
+        with ctop1:
+            if st.button("⬅️ Voltar aos alojamentos", key="quick_back_to_aloj"):
+                st.session_state["quick_selected_aloj"] = None
+                st.session_state["quick_selected_idx"] = None
+                st.rerun()
+        with ctop2:
+            safe_aloj = html.escape(str(selected_aloj))
+            safe_badge = html.escape(ALOJAMENTO_BADGES.get(str(selected_aloj).upper(), "⬜"))
+            st.markdown(
+                f"<div style='margin-top:0.45rem;font-weight:700;'>Alojamento selecionado: {safe_badge} {safe_aloj}</div>",
+                unsafe_allow_html=True,
+            )
+
+        if pessoas_df.empty:
+            st.info("Sem pessoas neste alojamento.")
+            return
+
+        st.caption("Seleciona a pessoa")
+        cols_pessoas = st.columns(3)
+        for i, (_, row) in enumerate(pessoas_df.iterrows()):
+            nome_botao = format_nome_com_quarto(row.get("Nome"), row.get("Unidade")) or "Sem nome"
+            with cols_pessoas[i % 3]:
+                if st.button(
+                    nome_botao,
+                    key=f"quick_guest_{selected_aloj.lower()}_{int(row['_idx'])}",
+                    use_container_width=True,
+                ):
+                    st.session_state["quick_selected_idx"] = int(row["_idx"])
+                    st.rerun()
+        return
+
+    if selected_idx not in quick_df.index:
+        st.session_state["quick_selected_idx"] = None
+        st.rerun()
+
+    row = quick_df.loc[selected_idx]
+
+    # Passo 3: apenas ficha da pessoa selecionada
+    ctop1, ctop2 = st.columns([1.5, 4])
+    with ctop1:
+        if st.button("⬅️ Voltar aos nomes", key="quick_back_to_names"):
+            st.session_state["quick_selected_idx"] = None
+            st.rerun()
+    with ctop2:
+        safe_aloj = html.escape(str(selected_aloj))
+        safe_badge = html.escape(ALOJAMENTO_BADGES.get(str(selected_aloj).upper(), "⬜"))
+        st.markdown(
+            f"<div style='margin-top:0.45rem;font-weight:700;'>Alojamento: {safe_badge} {safe_aloj}</div>",
+            unsafe_allow_html=True,
+        )
+
+    nome_sel = "Sem nome" if pd.isna(row.get("Nome")) else str(row.get("Nome")).strip()
+    quartos_text = format_quartos_text(row.get("Unidade"))
+    st.markdown(f"### {nome_sel}")
+    st.success(f"Quarto(s): {quartos_text}")
+
+    hora_options = ["nenhuma"] + suggested_times
+    pago_options = ["Não", "Sim"]
+
+    hora_default = str(row.get("Hora PA")) if pd.notna(row.get("Hora PA")) else None
+    if hora_default not in hora_options:
+        hora_default = None
+
+    pago_default = str(row.get("PA pago")) if pd.notna(row.get("PA pago")) else None
+    if pago_default not in pago_options:
+        pago_default = None
+
+    notas_default = str(row.get("Notas")) if pd.notna(row.get("Notas")) else ""
+
+    c1, c2, c3 = st.columns([1, 1, 1.5])
+    with c1:
+        nova_hora = st.selectbox(
+            "Hora PA",
+            options=hora_options,
+            index=hora_options.index(hora_default) if hora_default is not None else None,
+            placeholder="nenhuma",
+            key=f"quick_hora_pa_{selected_idx}",
+        )
+    with c2:
+        novo_pago = st.selectbox(
+            "PA pago",
+            options=pago_options,
+            index=pago_options.index(pago_default) if pago_default is not None else None,
+            placeholder="Não",
+            key=f"quick_pa_pago_{selected_idx}",
+        )
+    with c3:
+        novas_notas = st.text_input(
+            "Notas",
+            value=notas_default,
+            key=f"quick_notas_{selected_idx}",
+            placeholder="Escreve uma nota...",
+        )
+
+    if st.button("Salvar alterações", key=f"quick_save_{selected_idx}", type="primary"):
+        updated_df = quick_df.copy()
+        updated_df.loc[selected_idx, "Hora PA"] = None if not nova_hora or nova_hora == "nenhuma" else nova_hora
+        updated_df.loc[selected_idx, "PA pago"] = None if not novo_pago or novo_pago == "Não" else novo_pago
+        updated_df.loc[selected_idx, "Notas"] = None if not str(novas_notas).strip() else str(novas_notas).strip()
+        updated_df = sanitize_optional_columns(updated_df)
+
+        st.session_state["reservas_editor_df"] = updated_df.copy()
+        st.session_state["current_df"] = updated_df.copy()
+        st.session_state["reservas_df"] = updated_df.copy()
+        save_reservas(updated_df)
+        st.success("Alterações guardadas com sucesso.")
+        st.rerun()
 
 def _render_reservas_editor_impl(suggested_times):
     editor_df = sanitize_optional_columns(
@@ -586,6 +913,109 @@ def _render_reservas_editor_impl(suggested_times):
         st.success("Reserva atualizada.")
         st.rerun()
 
+    if st.checkbox("Editar todos os campos da reserva selecionada", value=False, key="show_full_edit"):
+        row_edit = editor_df.loc[reserva_idx]
+        checkin_edit_options = _existing_date_options(editor_df, "Check-in")
+        checkout_edit_options = _existing_date_options(editor_df, "Check-out")
+
+        with st.form("editar_reserva_form"):
+            ef1, ef2, ef3 = st.columns(3)
+            with ef1:
+                edit_nome = st.text_input("Nome", value=str(row_edit.get("Nome", "") or ""))
+            with ef2:
+                aloj_atual = str(row_edit.get("Alojamento", "") or "")
+                aloj_idx = ALOJAMENTOS.index(aloj_atual) if aloj_atual in ALOJAMENTOS else 0
+                edit_alojamento = st.selectbox("Alojamento", ALOJAMENTOS, index=aloj_idx)
+            with ef3:
+                edit_pessoas = st.number_input(
+                    "Pessoas",
+                    min_value=1,
+                    step=1,
+                    value=int(pd.to_numeric(row_edit.get("Pessoas", 1), errors="coerce") or 1),
+                )
+
+            ef4, ef5, ef6 = st.columns(3)
+            with ef4:
+                checkin_atual = pd.to_datetime(row_edit.get("Check-in"), errors="coerce")
+                checkin_atual_date = checkin_atual.date() if pd.notna(checkin_atual) else None
+                if checkin_edit_options:
+                    ci_idx = checkin_edit_options.index(checkin_atual_date) if checkin_atual_date in checkin_edit_options else 0
+                    edit_checkin = st.selectbox(
+                        "Check-in",
+                        options=checkin_edit_options,
+                        index=ci_idx,
+                        format_func=lambda d: d.strftime("%d/%m/%Y"),
+                    )
+                else:
+                    edit_checkin = st.date_input("Check-in", value=checkin_atual_date)
+            with ef5:
+                checkout_atual = pd.to_datetime(row_edit.get("Check-out"), errors="coerce")
+                checkout_atual_date = checkout_atual.date() if pd.notna(checkout_atual) else None
+                if checkout_edit_options:
+                    co_idx = checkout_edit_options.index(checkout_atual_date) if checkout_atual_date in checkout_edit_options else 0
+                    edit_checkout = st.selectbox(
+                        "Check-out",
+                        options=checkout_edit_options,
+                        index=co_idx,
+                        format_func=lambda d: d.strftime("%d/%m/%Y"),
+                    )
+                else:
+                    edit_checkout = st.date_input("Check-out", value=checkout_atual_date)
+            with ef6:
+                edit_unidade = st.text_input("Unidade", value=str(row_edit.get("Unidade", "") or ""))
+
+            ef7, ef8, ef9 = st.columns(3)
+            hora_opts_edit = ["nenhuma"] + suggested_times
+            hora_atual_edit = str(row_edit.get("Hora PA")) if pd.notna(row_edit.get("Hora PA")) else "nenhuma"
+            if hora_atual_edit not in hora_opts_edit:
+                hora_atual_edit = "nenhuma"
+            pago_opts_edit = ["Não", "Sim"]
+            pago_atual_edit = str(row_edit.get("PA pago")) if pd.notna(row_edit.get("PA pago")) else "Não"
+            if pago_atual_edit not in pago_opts_edit:
+                pago_atual_edit = "Não"
+            with ef7:
+                edit_hora_pa = st.selectbox(
+                    "Hora PA",
+                    options=hora_opts_edit,
+                    index=hora_opts_edit.index(hora_atual_edit),
+                )
+            with ef8:
+                edit_pa_pago = st.selectbox(
+                    "PA pago",
+                    options=pago_opts_edit,
+                    index=pago_opts_edit.index(pago_atual_edit),
+                )
+            with ef9:
+                edit_notas = st.text_input(
+                    "Notas",
+                    value=str(row_edit.get("Notas", "") or ""),
+                    placeholder="Escreve uma nota...",
+                )
+
+            edit_submit = st.form_submit_button("Guardar alterações completas")
+
+        if edit_submit:
+            nome_edit_txt = str(edit_nome).strip()
+            if not nome_edit_txt:
+                show_pink_alert("O nome não pode ficar vazio.")
+            else:
+                editor_df.loc[reserva_idx, "Nome"] = nome_edit_txt
+                editor_df.loc[reserva_idx, "Alojamento"] = edit_alojamento
+                editor_df.loc[reserva_idx, "Pessoas"] = int(edit_pessoas)
+                editor_df.loc[reserva_idx, "Check-in"] = edit_checkin
+                editor_df.loc[reserva_idx, "Check-out"] = edit_checkout
+                editor_df.loc[reserva_idx, "Unidade"] = str(edit_unidade).strip() or None
+                editor_df.loc[reserva_idx, "Hora PA"] = None if edit_hora_pa == "nenhuma" else edit_hora_pa
+                editor_df.loc[reserva_idx, "PA pago"] = "Sim" if edit_pa_pago == "Sim" else None
+                editor_df.loc[reserva_idx, "Notas"] = str(edit_notas).strip() or None
+                editor_df = sanitize_optional_columns(editor_df)
+                st.session_state["reservas_editor_df"] = editor_df.copy()
+                st.session_state["current_df"] = editor_df.copy()
+                st.session_state["reservas_df"] = editor_df.copy()
+                save_reservas(editor_df)
+                st.success("Reserva editada com sucesso.")
+                st.rerun()
+
     st.divider()
     st.subheader("🛏️ Ocupação desta noite")
     st.metric("Total de hóspedes", total_hospedes_esta_noite(editor_df))
@@ -622,6 +1052,8 @@ if "pending_overcrowding_messages" not in st.session_state:
     st.session_state["pending_overcrowding_messages"] = []
 if "show_overcrowding_ack" not in st.session_state:
     st.session_state["show_overcrowding_ack"] = False
+if "quartos_disponiveis" not in st.session_state:
+    st.session_state["quartos_disponiveis"] = load_quartos()
 
 st.markdown("### Gestão de Reservas + Pequenos-Almoços")
 
@@ -636,8 +1068,8 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.session_state["pending_overcrowding_messages"] = []
         st.rerun()
 
-tab_reservas, tab_pa, tab_importar, tab_guardar = st.tabs(
-    ["Reservas", "Pequenos almoços", "Importar", "Limpar"]
+tab_acesso_rapido, tab_reservas, tab_pa, tab_importar, tab_inserir, tab_guardar = st.tabs(
+    ["Acesso rápido", "Reservas", "Pequenos almoços", "Importar", "Inserir", "Limpar"]
 )
 
 uploaded_files = []
@@ -658,7 +1090,7 @@ with tab_importar:
 
             alojamento = st.selectbox(
                 f"Alojamento para {file.name}",
-                ["ABH", "AFH", "PIPO", "DUNAS", "DUNAS2", "FOZ", "ESCAPE"],
+                ALOJAMENTOS,
                 key=file.name
             )
 
@@ -686,6 +1118,150 @@ with tab_importar:
             except Exception as e:
                 show_pink_alert(f"Erro no ficheiro {file.name}: {e}")
 
+
+with tab_inserir:
+    st.subheader("Adicionar reserva direta")
+
+    _df_sug = st.session_state.get("reservas_df", pd.DataFrame()).copy()
+    checkin_options = _existing_date_options(_df_sug, "Check-in")
+    checkout_options = _existing_date_options(_df_sug, "Check-out")
+
+    with st.form("manual_reserva_form", clear_on_submit=True):
+        mf1, mf2, mf3 = st.columns(3)
+        with mf1:
+            manual_nome = st.text_input("Nome do hóspede")
+        with mf2:
+            manual_alojamento = st.selectbox("Alojamento", ALOJAMENTOS, key="manual_alojamento")
+        with mf3:
+            manual_pessoas = st.number_input("Pessoas", min_value=1, step=1, value=1)
+
+        mf4, mf5, mf6 = st.columns(3)
+        with mf4:
+            if checkin_options:
+                manual_checkin = st.selectbox(
+                    "Check-in",
+                    options=checkin_options,
+                    format_func=lambda d: d.strftime("%d/%m/%Y"),
+                    help="Datas sugeridas com base nos outros hóspedes.",
+                )
+            else:
+                manual_checkin = st.date_input("Check-in")
+        with mf5:
+            if checkout_options:
+                manual_checkout = st.selectbox(
+                    "Check-out",
+                    options=checkout_options,
+                    format_func=lambda d: d.strftime("%d/%m/%Y"),
+                    help="Datas sugeridas com base nos outros hóspedes.",
+                )
+            else:
+                manual_checkout = st.date_input("Check-out")
+        with mf6:
+            manual_unidade = st.text_input("Unidade (ex: Quarto 1)")
+
+        mf7, mf8, mf9 = st.columns(3)
+        with mf7:
+            manual_hora_pa = st.selectbox(
+                "Hora PA",
+                options=["nenhuma"] + build_suggested_times(),
+                index=0,
+                help="Hora do pequeno-almoço.",
+            )
+        with mf8:
+            manual_pa_pago = st.selectbox(
+                "PA pago",
+                options=["Sim", "Não"],
+                index=0,
+                help="Por defeito fica 'Sim' para reservas diretas com pequeno-almoço incluído.",
+            )
+        with mf9:
+            manual_notas = st.text_input("Notas", placeholder="Escreve uma nota...")
+
+        manual_submit = st.form_submit_button("Adicionar hóspede")
+
+    if manual_submit:
+        _nome_txt = str(manual_nome).strip()
+        _unidade_txt = str(manual_unidade).strip()
+        if not _nome_txt:
+            show_pink_alert("Indica o nome do hóspede para adicionar a reserva direta.")
+        elif manual_checkout < manual_checkin:
+            show_pink_alert("A data de check-out não pode ser anterior ao check-in.")
+        else:
+            _manual_df = pd.DataFrame(
+                [
+                    {
+                        "Nome": _nome_txt,
+                        "Check-in": manual_checkin,
+                        "Check-out": manual_checkout,
+                        "Pessoas": int(manual_pessoas),
+                        "Unidade": _unidade_txt,
+                        "Alojamento": manual_alojamento,
+                        "Hora PA": None if not manual_hora_pa or manual_hora_pa == "nenhuma" else manual_hora_pa,
+                        "PA pago": "Sim" if manual_pa_pago == "Sim" else None,
+                        "Notas": str(manual_notas).strip() if str(manual_notas).strip() else None,
+                    }
+                ]
+            )
+            _base_df = st.session_state.get("reservas_df", pd.DataFrame()).copy()
+            _merged_df, _ = merge_new_reservas(_base_df, _manual_df)
+            _merged_df = sanitize_optional_columns(_merged_df)
+            st.session_state["reservas_df"] = _merged_df
+            st.session_state["reservas_editor_df"] = _merged_df
+            st.session_state["current_df"] = _merged_df
+            save_reservas(_merged_df)
+            st.success("Reserva direta adicionada com sucesso.")
+            st.rerun()
+
+    st.divider()
+    st.subheader("Quartos disponíveis hoje")
+
+    with st.form("quartos_form", clear_on_submit=True):
+        qf1, qf2, qf3 = st.columns(3)
+        with qf1:
+            qf_alojamento = st.selectbox("Alojamento", ALOJAMENTOS)
+        with qf2:
+            _unidade_opcoes = [f"Quarto {i}" for i in range(1, 7)] + [f"Cama {i}" for i in range(1, 7)]
+            qf_unidade = st.selectbox("Unidade", _unidade_opcoes, help="Camas disponíveis apenas no ABH")
+        with qf3:
+            qf_preco = st.number_input("Preço (€)", min_value=0.0, step=5.0, format="%.0f")
+        qf4, qf5 = st.columns(2)
+        with qf4:
+            qf_pessoas = st.number_input("Pessoas (opcional)", min_value=0, step=1, value=0)
+        with qf5:
+            qf_notas = st.text_input("Notas (opcional)", placeholder="ex: casa de banho partilhada")
+        qf_submit = st.form_submit_button("Adicionar quarto disponível")
+
+    if qf_submit:
+        st.session_state["quartos_disponiveis"].append({
+            "alojamento": qf_alojamento,
+            "unidade": qf_unidade,
+            "preco": float(qf_preco),
+            "pessoas": int(qf_pessoas) if qf_pessoas > 0 else None,
+            "notas": str(qf_notas).strip() or None,
+        })
+        save_quartos(st.session_state["quartos_disponiveis"])
+        st.success(f"{qf_alojamento} — {qf_unidade} adicionado.")
+        st.rerun()
+
+    _quartos_lista = st.session_state.get("quartos_disponiveis", [])
+    if _quartos_lista:
+        for _qi2, _q2 in enumerate(_quartos_lista):
+            _b2 = ALOJAMENTO_BADGES.get(_q2["alojamento"].upper(), "⬜")
+            _p2 = _q2.get("preco", 0)
+            _p2_str = f"{int(_p2)} €" if _p2 == int(_p2) else f"{_p2:.2f} €"
+            _pax2 = f" · {_q2['pessoas']} pax" if _q2.get("pessoas") else ""
+            _nota2 = f" · {_q2['notas']}" if _q2.get("notas") else ""
+            _c1, _c2 = st.columns([6, 1])
+            with _c1:
+                st.write(f"{_b2} {_q2['alojamento']} — {_q2['unidade']} — {_p2_str}{_pax2}{_nota2}")
+            with _c2:
+                if st.button("Remover", key=f"rm_quarto_{_qi2}"):
+                    st.session_state["quartos_disponiveis"].pop(_qi2)
+                    save_quartos(st.session_state["quartos_disponiveis"])
+                    st.rerun()
+    else:
+        st.caption("Sem quartos disponíveis registados.")
+
 df_guardado = st.session_state["reservas_df"].copy()
 df_final = pd.DataFrame()
 novas_reservas_count = 0
@@ -712,6 +1288,9 @@ if not df_final.empty:
     df_final = df_final[ordered_cols + extra_cols]
 
     st.session_state["reservas_editor_df"] = sanitize_optional_columns(df_final.copy())
+
+    with tab_acesso_rapido:
+        render_quick_access_tab(st.session_state["reservas_editor_df"], suggested_times)
 
     with tab_reservas:
         render_reservas_editor(suggested_times)
@@ -921,6 +1500,8 @@ if not df_final.empty:
                 if st.button("Cancelar"):
                     st.session_state["confirm_clear"] = False
 else:
+    with tab_acesso_rapido:
+        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
     with tab_reservas:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
     with tab_pa:
