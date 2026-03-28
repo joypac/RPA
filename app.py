@@ -1354,6 +1354,9 @@ novas_reservas_count = 0
 if all_data:
     df_importado = pd.concat(all_data, ignore_index=True)
     df_final, novas_reservas_count = merge_new_reservas(df_guardado, df_importado)
+    df_final = sanitize_optional_columns(df_final)
+    st.session_state["reservas_df"] = df_final
+    save_reservas(df_final)
 elif not df_guardado.empty:
     df_final = df_guardado.copy()
 
