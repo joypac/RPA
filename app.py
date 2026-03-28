@@ -503,30 +503,53 @@ def format_nome_com_quarto(nome_value, unidade_value):
 
 
 def format_quartos_text(unidade_value):
+    import re
+
     if pd.isna(unidade_value):
-        return "Sem quarto definido"
+        return "Sem unidade definida"
 
     partes = [p.strip() for p in str(unidade_value).split(",") if p.strip()]
     if not partes:
-        return "Sem quarto definido"
+        return "Sem unidade definida"
 
-    quartos = []
+    unidades = []
+    vistos = set()
+
+    def add_unidade(label):
+        if label not in vistos:
+            vistos.add(label)
+            unidades.append(label)
+
     for parte in partes:
-        import re
+        parte_norm = parte.strip()
+        parte_low = parte_norm.lower()
 
-        m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
-        if m_quarto:
-            quartos.append(f"Quarto {int(m_quarto.group(1))}")
+        # Ignora textos de contagem (ex.: "2 quartos", "3 camas") sem identificador de unidade.
+        if re.fullmatch(r"\d+\s+quartos?", parte_low) or re.fullmatch(r"\d+\s+camas?", parte_low):
             continue
 
-        m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
-        if m_cama:
-            quartos.append(f"Cama {int(m_cama.group(1))}")
-            continue
+        encontrou_alguma = False
 
-        quartos.append(parte)
+        for num in re.findall(r"apartamento[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
+            add_unidade(f"Apartamento {int(num)}")
+            encontrou_alguma = True
 
-    return ", ".join(quartos)
+        for num in re.findall(r"(?:apto|apt\.?)[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
+            add_unidade(f"Apartamento {int(num)}")
+            encontrou_alguma = True
+
+        for num in re.findall(r"quarto[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
+            add_unidade(f"Quarto {int(num)}")
+            encontrou_alguma = True
+
+        for num in re.findall(r"cama[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
+            add_unidade(f"Cama {int(num)}")
+            encontrou_alguma = True
+
+        if not encontrou_alguma:
+            add_unidade(parte_norm)
+
+    return ", ".join(unidades) if unidades else "Sem unidade definida"
 
 
 def _build_quick_access_button_css(alojamentos):
@@ -732,7 +755,7 @@ def render_quick_access_tab(df, suggested_times):
     nome_sel = "Sem nome" if pd.isna(row.get("Nome")) else str(row.get("Nome")).strip()
     quartos_text = format_quartos_text(row.get("Unidade"))
     st.markdown(f"### {nome_sel}")
-    st.success(f"Quarto(s): {quartos_text}")
+    st.success(f"Unidade(s): {quartos_text}")
 
     hora_options = ["nenhuma"] + suggested_times
     pago_options = ["Não", "Sim"]
