@@ -1195,6 +1195,7 @@ tab_acesso_rapido, tab_reservas, tab_pa, tab_inserir, tab_importar, tab_guardar 
 
 uploaded_files = []
 all_data = []
+import_submit = False
 
 with tab_importar:
     uploaded_files = st.file_uploader(
@@ -1238,6 +1239,8 @@ with tab_importar:
                 all_data.append(df_clean)
             except Exception as e:
                 show_pink_alert(f"Erro no ficheiro {file.name}: {e}")
+
+        import_submit = st.button("Importar reservas", type="primary")
 
 
 with tab_inserir:
@@ -1405,7 +1408,7 @@ df_guardado = st.session_state["reservas_df"].copy()
 df_final = pd.DataFrame()
 novas_reservas_count = 0
 
-if all_data:
+if import_submit and all_data:
     df_importado = pd.concat(all_data, ignore_index=True)
     df_final, novas_reservas_count = merge_new_reservas(df_guardado, df_importado)
     df_final = sanitize_optional_columns(df_final)
