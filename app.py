@@ -153,6 +153,26 @@ DISPLAY_COL_ORDER = [
 
 ALOJAMENTOS = ["ABH", "AFH", "PIPO", "DUNAS", "DUNAS2", "FOZ", "ESCAPE", "MARES"]
 
+
+def normalize_alojamento(value):
+    import re
+
+    if pd.isna(value):
+        return ""
+
+    txt = str(value).strip().upper()
+    if not txt:
+        return ""
+
+    # Prioriza códigos mais longos para evitar DUNAS2 cair em DUNAS.
+    for code in sorted(ALOJAMENTOS, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(code)}\b", txt):
+            return code
+
+    # Remove prefixos visuais (emoji/símbolos) e espaços extra.
+    txt = re.sub(r"^[^A-Z0-9]+", "", txt)
+    return txt
+
 # ── Supabase (sincronização na nuvem, opcional) ──────────────────────────────
 USE_SUPABASE = False
 _supabase_client = None
@@ -586,14 +606,14 @@ def render_quick_access_tab(df, suggested_times):
         return
 
     quick_df = sanitize_optional_columns(df.copy())
+    quick_df["_aloj_norm"] = quick_df["Alojamento"].apply(normalize_alojamento)
     alojamentos = (
-        quick_df["Alojamento"]
+        quick_df["_aloj_norm"]
         .dropna()
         .astype(str)
         .str.strip()
         .replace("", pd.NA)
         .dropna()
-        .str.upper()
         .unique()
         .tolist()
     )
@@ -704,7 +724,7 @@ def render_quick_access_tab(df, suggested_times):
                             st.rerun()
         return
 
-    pessoas_df = quick_df[quick_df["Alojamento"].astype(str).str.upper() == selected_aloj].copy()
+    pessoas_df = quick_df[quick_df["_aloj_norm"] == selected_aloj].copy()
     pessoas_df = pessoas_df.reset_index().rename(columns={"index": "_idx"})
 
     # Passo 2: apenas nomes do alojamento selecionado
@@ -1213,7 +1233,7 @@ with tab_importar:
                     "Check-out": df.iloc[:, 4],
                     "Pessoas": df.iloc[:, 8],
                     "Unidade": df.iloc[:, 22].apply(limpar_unidade),
-                    "Alojamento": alojamento
+                    "Alojamento": normalize_alojamento(alojamento)
                 })
                 all_data.append(df_clean)
             except Exception as e:
@@ -1296,7 +1316,7 @@ with tab_inserir:
                         "Check-out": manual_checkout,
                         "Pessoas": int(manual_pessoas),
                         "Unidade": _unidade_txt,
-                        "Alojamento": manual_alojamento,
+                        "Alojamento": normalize_alojamento(manual_alojamento),
                         "Hora PA": None if not manual_hora_pa or manual_hora_pa == "nenhuma" else manual_hora_pa,
                         "PA pago": "Sim" if manual_pa_pago == "Sim" else None,
                         "Notas": str(manual_notas).strip() if str(manual_notas).strip() else None,
