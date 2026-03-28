@@ -309,6 +309,25 @@ def save_quartos(quartos_list):
         json.dump(quartos_list, f, ensure_ascii=False, indent=2)
 
 
+def refresh_data_from_storage():
+    refreshed_reservas = sanitize_optional_columns(load_reservas())
+    if not refreshed_reservas.empty and "Origem" not in refreshed_reservas.columns:
+        refreshed_reservas["Origem"] = "Importada"
+    elif not refreshed_reservas.empty:
+        refreshed_reservas["Origem"] = (
+            refreshed_reservas["Origem"]
+            .astype(str)
+            .str.strip()
+            .replace({"": "Importada", "none": "Importada", "nan": "Importada", "None": "Importada"})
+        )
+
+    refreshed_reservas = normalize_pessoas_column(refreshed_reservas)
+    st.session_state["reservas_df"] = refreshed_reservas.copy()
+    st.session_state["reservas_editor_df"] = refreshed_reservas.copy()
+    st.session_state["current_df"] = refreshed_reservas.copy()
+    st.session_state["quartos_disponiveis"] = load_quartos()
+
+
 def get_last_saved_text():
     last = st.session_state.get("last_saved_at")
     if last:
@@ -1268,7 +1287,14 @@ if "show_overcrowding_ack" not in st.session_state:
 if "quartos_disponiveis" not in st.session_state:
     st.session_state["quartos_disponiveis"] = load_quartos()
 
-st.markdown("### Gestão de Reservas + Pequenos-Almoços")
+header_c1, header_c2 = st.columns([4, 1.2])
+with header_c1:
+    st.markdown("### Gestão de Reservas + Pequenos-Almoços")
+with header_c2:
+    if st.button("🔄 Atualizar", use_container_width=True, help="Recarrega dados guardados do ficheiro/Supabase"):
+        refresh_data_from_storage()
+        st.success("Dados atualizados.")
+        st.rerun()
 
 st.caption(f"Guardado pela última vez: {get_last_saved_text()}")
 
