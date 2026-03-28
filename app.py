@@ -474,22 +474,18 @@ def format_alojamento_badge(alojamento_value):
 
 
 def extract_room_tag(unidade_value):
-    import re
-
-    if pd.isna(unidade_value):
+    unidades = parse_unidade_labels(unidade_value)
+    if not unidades:
         return ""
 
-    partes = [p.strip() for p in str(unidade_value).split(",") if p.strip()]
-    for parte in partes:
-        m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
-        if m_quarto:
-            return f"Q{int(m_quarto.group(1))}"
-
-        m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
-        if m_cama:
-            return f"C{int(m_cama.group(1))}"
-
-    return ""
+    primeira = unidades[0]
+    if primeira.lower().startswith("quarto "):
+        return f"Q{primeira.split(' ', 1)[1]}"
+    if primeira.lower().startswith("cama "):
+        return f"C{primeira.split(' ', 1)[1]}"
+    if primeira.lower().startswith("apartamento "):
+        return f"A{primeira.split(' ', 1)[1]}"
+    return primeira
 
 
 def format_nome_com_quarto(nome_value, unidade_value):
@@ -502,54 +498,67 @@ def format_nome_com_quarto(nome_value, unidade_value):
     return nome
 
 
-def format_quartos_text(unidade_value):
+def parse_unidade_labels(unidade_value):
     import re
 
     if pd.isna(unidade_value):
-        return "Sem unidade definida"
+        return []
 
-    partes = [p.strip() for p in str(unidade_value).split(",") if p.strip()]
-    if not partes:
-        return "Sem unidade definida"
+    raw = str(unidade_value).strip()
+    if not raw:
+        return []
 
-    unidades = []
-    vistos = set()
+    partes = [p.strip() for p in re.split(r"[,;|]", raw) if p.strip()]
+    labels = []
+    seen = set()
 
-    def add_unidade(label):
-        if label not in vistos:
-            vistos.add(label)
-            unidades.append(label)
+    def _add(label):
+        if label and label not in seen:
+            seen.add(label)
+            labels.append(label)
+
+    def _split_ids(ids_chunk):
+        return [t.strip() for t in re.split(r"\s*(?:e|/|-)\s*", ids_chunk) if t.strip()]
 
     for parte in partes:
-        parte_norm = parte.strip()
-        parte_low = parte_norm.lower()
+        p = parte.lower().strip()
 
-        # Ignora textos de contagem (ex.: "2 quartos", "3 camas") sem identificador de unidade.
-        if re.fullmatch(r"\d+\s+quartos?", parte_low) or re.fullmatch(r"\d+\s+camas?", parte_low):
+        # Ignora valores genéricos que não identificam unidade real.
+        if re.fullmatch(r"\d+(?:\.0+)?", p):
+            continue
+        if re.fullmatch(r"unidade\s*[:#-]?\s*\d+(?:\.0+)?", p):
             continue
 
-        encontrou_alguma = False
+        # Ignora contagens genéricas sem unidade concreta (ex.: "2 quartos").
+        if re.fullmatch(r"\d+\s+(quartos?|camas?|apartamentos?)", p):
+            continue
 
-        for num in re.findall(r"apartamento[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
-            add_unidade(f"Apartamento {int(num)}")
-            encontrou_alguma = True
+        found = False
+        patterns = [
+            (r"apartamentos?\s*([a-z0-9]+(?:\s*(?:e|/|-)\s*[a-z0-9]+)*)", "Apartamento"),
+            (r"(?:apto|apt\.?)\s*([a-z0-9]+(?:\s*(?:e|/|-)\s*[a-z0-9]+)*)", "Apartamento"),
+            (r"quartos?\s*([a-z0-9]+(?:\s*(?:e|/|-)\s*[a-z0-9]+)*)", "Quarto"),
+            (r"camas?\s*([a-z0-9]+(?:\s*(?:e|/|-)\s*[a-z0-9]+)*)", "Cama"),
+        ]
 
-        for num in re.findall(r"(?:apto|apt\.?)[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
-            add_unidade(f"Apartamento {int(num)}")
-            encontrou_alguma = True
+        for pattern, prefix in patterns:
+            for m in re.finditer(pattern, p, flags=re.IGNORECASE):
+                for unit_id in _split_ids(m.group(1)):
+                    _add(f"{prefix} {unit_id.upper()}")
+                    found = True
 
-        for num in re.findall(r"quarto[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
-            add_unidade(f"Quarto {int(num)}")
-            encontrou_alguma = True
+        if not found:
+            # Só mantém fallback quando há texto útil; evita mostrar apenas números.
+            if re.fullmatch(r"\d+(?:\.0+)?", p):
+                continue
+            _add(parte)
 
-        for num in re.findall(r"cama[^\d]*(\d+)", parte_low, flags=re.IGNORECASE):
-            add_unidade(f"Cama {int(num)}")
-            encontrou_alguma = True
+    return labels
 
-        if not encontrou_alguma:
-            add_unidade(parte_norm)
 
-    return ", ".join(unidades) if unidades else "Sem unidade definida"
+def format_quartos_text(unidade_value):
+    labels = parse_unidade_labels(unidade_value)
+    return ", ".join(labels) if labels else "Sem unidade definida"
 
 
 def _build_quick_access_button_css(alojamentos):
