@@ -900,7 +900,9 @@ def _render_reservas_editor_impl(suggested_times):
 
     notas_default = str(current_notas) if pd.notna(current_notas) else ""
 
-    c1, c2, c3 = st.columns([1, 1, 1.5])
+    unidade_default = "" if pd.isna(editor_df.loc[reserva_idx, "Unidade"]) else str(editor_df.loc[reserva_idx, "Unidade"]).strip()
+
+    c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1.4])
     with c1:
         nova_hora = st.selectbox(
             "Hora PA",
@@ -924,12 +926,20 @@ def _render_reservas_editor_impl(suggested_times):
             key=f"notas_update_{reserva_idx}",
             placeholder="Escreve uma nota...",
         )
+    with c4:
+        nova_unidade = st.text_input(
+            "Quarto/Unidade",
+            value=unidade_default,
+            key=f"unidade_update_{reserva_idx}",
+            placeholder="Ex: Quarto 2",
+        )
 
     if st.button("Aplicar alterações à reserva", key="apply_reserva_update"):
         df_before_update = editor_df.copy()
         editor_df.loc[reserva_idx, "Hora PA"] = None if not nova_hora or nova_hora == "nenhuma" else nova_hora
         editor_df.loc[reserva_idx, "PA pago"] = None if not novo_pago or novo_pago == "Não" else novo_pago
         editor_df.loc[reserva_idx, "Notas"] = None if not str(novas_notas).strip() or str(novas_notas).strip().lower() == "nenhuma" else novas_notas
+        editor_df.loc[reserva_idx, "Unidade"] = None if not str(nova_unidade).strip() else str(nova_unidade).strip()
         editor_df = sanitize_optional_columns(editor_df)
 
         old_overcrowding = set(build_overcrowding_messages(df_before_update, suggested_times))
@@ -945,6 +955,32 @@ def _render_reservas_editor_impl(suggested_times):
         save_reservas(editor_df)
         st.success("Reserva atualizada.")
         st.rerun()
+
+    if "delete_reserva_confirm_idx" not in st.session_state:
+        st.session_state["delete_reserva_confirm_idx"] = None
+
+    d1, d2 = st.columns([1.2, 4])
+    with d1:
+        if st.button("Eliminar reserva", key="delete_reserva_selected", type="secondary"):
+            st.session_state["delete_reserva_confirm_idx"] = reserva_idx
+
+    if st.session_state.get("delete_reserva_confirm_idx") == reserva_idx:
+        show_pink_alert("Confirma eliminação da reserva selecionada?")
+        dc1, dc2 = st.columns([1.2, 1.2])
+        with dc1:
+            if st.button("Confirmar eliminação", key=f"confirm_delete_{reserva_idx}", type="primary"):
+                updated_df = editor_df.drop(index=reserva_idx).reset_index(drop=True)
+                updated_df = sanitize_optional_columns(updated_df)
+                st.session_state["reservas_editor_df"] = updated_df.copy()
+                st.session_state["current_df"] = updated_df.copy()
+                st.session_state["reservas_df"] = updated_df.copy()
+                save_reservas(updated_df)
+                st.session_state["delete_reserva_confirm_idx"] = None
+                st.success("Reserva eliminada com sucesso.")
+                st.rerun()
+        with dc2:
+            if st.button("Cancelar eliminação", key=f"cancel_delete_{reserva_idx}"):
+                st.session_state["delete_reserva_confirm_idx"] = None
 
     if st.checkbox("Editar todos os campos da reserva selecionada", value=False, key="show_full_edit"):
         row_edit = editor_df.loc[reserva_idx]
@@ -1204,8 +1240,8 @@ with tab_inserir:
             manual_pa_pago = st.selectbox(
                 "PA pago",
                 options=["Sim", "Não"],
-                index=0,
-                help="Por defeito fica 'Sim' para reservas diretas com pequeno-almoço incluído.",
+                index=1,
+                help="Por defeito fica 'Não'.",
             )
         with mf9:
             manual_notas = st.text_input("Notas", placeholder="Escreve uma nota...")
