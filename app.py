@@ -139,6 +139,8 @@ st.markdown(
 RESERVAS_FILE = Path("reservas.json")
 QUARTOS_FILE = Path("quartos_disponiveis.json")
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
+IMPORT_MATCH_COLS = ["Nome", "Check-in", "Alojamento"]
+IMPORT_UPDATE_COLS = ["Check-out", "Pessoas", "Unidade"]
 DISPLAY_COL_ORDER = [
     "Alojamento",
     "Nome",
@@ -346,6 +348,10 @@ def _build_reserva_key(row):
     return tuple(_normalize_key_value(row.get(col), col) for col in RESERVA_KEY_COLS)
 
 
+def _build_import_match_key(row):
+    return tuple(_normalize_key_value(row.get(col), col) for col in IMPORT_MATCH_COLS)
+
+
 def merge_new_reservas(df_existing, df_incoming):
     if df_incoming.empty:
         return df_existing.copy(), 0
@@ -368,6 +374,60 @@ def merge_new_reservas(df_existing, df_incoming):
 
     merged = pd.concat([df_existing, df_new], ignore_index=True)
     return merged, len(df_new)
+
+
+def merge_imported_reservas(df_existing, df_incoming):
+    if df_incoming.empty:
+        return df_existing.copy(), 0, 0
+
+    incoming = df_incoming.copy()
+    incoming["Origem"] = "Importada"
+
+    if df_existing.empty:
+        return incoming.copy(), len(incoming), 0
+
+    all_cols = list(dict.fromkeys([*df_existing.columns.tolist(), *incoming.columns.tolist()]))
+    existing = df_existing.reindex(columns=all_cols).copy()
+    incoming = incoming.reindex(columns=all_cols).copy()
+
+    existing_key_to_idx = {}
+    for idx, row in existing.iterrows():
+        key = _build_import_match_key(row)
+        if key not in existing_key_to_idx:
+            existing_key_to_idx[key] = idx
+
+    added_count = 0
+    updated_count = 0
+
+    for _, in_row in incoming.iterrows():
+        key = _build_import_match_key(in_row)
+        match_idx = existing_key_to_idx.get(key)
+
+        if match_idx is None:
+            new_row_df = pd.DataFrame([in_row]).reindex(columns=all_cols)
+            existing = pd.concat([existing, new_row_df], ignore_index=True)
+            existing_key_to_idx[key] = len(existing) - 1
+            added_count += 1
+            continue
+
+        row_changed = False
+        for col in IMPORT_UPDATE_COLS:
+            old_val = existing.at[match_idx, col] if col in existing.columns else None
+            new_val = in_row.get(col)
+
+            old_is_na = pd.isna(old_val)
+            new_is_na = pd.isna(new_val)
+            if old_is_na and new_is_na:
+                continue
+
+            if (old_is_na and not new_is_na) or (not old_is_na and new_is_na) or str(old_val).strip() != str(new_val).strip():
+                existing.at[match_idx, col] = new_val
+                row_changed = True
+
+        if row_changed:
+            updated_count += 1
+
+    return existing, added_count, updated_count
 
 
 def build_suggested_times():
@@ -1250,7 +1310,7 @@ with tab_importar:
                 nome_idx = _find_col_idx(df, [r"\bnome\b", r"guest", r"h[oó]spede", r"cliente"], default_idx=2)
                 checkin_idx = _find_col_idx(df, [r"check\s*[-_ ]?in", r"entrada"], default_idx=3)
                 checkout_idx = _find_col_idx(df, [r"check\s*[-_ ]?out", r"sa[ií]da"], default_idx=4)
-                pessoas_idx = _find_col_idx(df, [r"\bpessoas\b", r"guests?", r"h[oó]spedes?", r"occup"], default_idx=8)
+                pessoas_idx = _find_col_idx(df, [r"\bpessoas\b", r"\bpeople\b", r"guests?", r"h[oó]spedes?", r"occup"], default_idx=8)
                 unidade_idx = _find_col_idx(
                     df,
                     [r"\bunit\s*type\b", r"\bunit\b", r"\bunidade\b", r"\bquarto\b", r"\broom\b", r"apart", r"accomm", r"\bcama\b", r"\bbed\b"],
@@ -1444,10 +1504,11 @@ with tab_inserir:
 df_guardado = st.session_state["reservas_df"].copy()
 df_final = pd.DataFrame()
 novas_reservas_count = 0
+reservas_atualizadas_count = 0
 
 if import_submit and all_data:
     df_importado = pd.concat(all_data, ignore_index=True)
-    df_final, novas_reservas_count = merge_new_reservas(df_guardado, df_importado)
+    df_final, novas_reservas_count, reservas_atualizadas_count = merge_imported_reservas(df_guardado, df_importado)
     df_final = sanitize_optional_columns(df_final)
     st.session_state["reservas_df"] = df_final
     save_reservas(df_final)
@@ -1666,11 +1727,13 @@ if not df_final.empty:
             st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
 
     with tab_importar:
-        if all_data:
-            if novas_reservas_count > 0:
-                st.success(f"Foram adicionadas {novas_reservas_count} reserva(s) nova(s).")
+        if import_submit and all_data:
+            if novas_reservas_count > 0 or reservas_atualizadas_count > 0:
+                st.success(
+                    f"Importação concluída: {novas_reservas_count} nova(s) e {reservas_atualizadas_count} atualizada(s)."
+                )
             else:
-                st.info("Não foram encontradas reservas novas no ficheiro importado.")
+                st.info("Sem alterações: as reservas importadas já estavam iguais.")
 
     with tab_guardar:
         if "clear_mode" not in st.session_state:
