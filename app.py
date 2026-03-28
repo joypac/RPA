@@ -407,7 +407,8 @@ def build_occupation_data(df_pa, suggested_times):
                 person_time = datetime.strptime(person_time_str, "%H:%M")
                 person_end = person_time + timedelta(minutes=45)
                 if person_time <= time_obj < person_end:
-                    occupation += int(person_row["Pessoas"])
+                    pessoas_val = pd.to_numeric(person_row.get("Pessoas"), errors="coerce")
+                    occupation += int(pessoas_val) if pd.notna(pessoas_val) else 0
         occupation_data.append({"Hora": time_slot, "Pessoas": occupation})
     return occupation_data
 
@@ -424,7 +425,9 @@ def build_overcrowding_messages(df, suggested_times, threshold=16):
     messages = []
     for row in build_occupation_data(df_pa, suggested_times):
         if row["Pessoas"] >= threshold:
-            messages.append(f"⚠️ {row['Hora']} → {int(row['Pessoas'])} pessoas")
+            pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+            pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
+            messages.append(f"⚠️ {row['Hora']} → {pessoas_total} pessoas")
     return messages
 
 
@@ -1493,13 +1496,16 @@ if not df_final.empty:
     with tab_pa:
         if len(df_pa) > 0:
             df_pa = df_pa.sort_values("Hora PA")
-            resumo = df_pa.groupby("Hora PA")["Pessoas"].sum().reset_index()
+            df_pa_resumo = df_pa.copy()
+            df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
+            resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
             total_pa_dia = total_pessoas_col(df_pa)
 
             st.subheader("📊 Resumo por Hora")
             for _, row in resumo.iterrows():
                 hora = row["Hora PA"]
-                total = int(row["Pessoas"])
+                total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                total = int(total_num) if pd.notna(total_num) else 0
                 if total >= 16:
                     show_pink_alert(f"{hora} → {total} pessoas")
                 else:
@@ -1545,7 +1551,9 @@ if not df_final.empty:
 
             for row in occupation_data:
                 if row["Pessoas"] >= 16:
-                    show_pink_alert(f"{row['Hora']} → {int(row['Pessoas'])} pessoas")
+                    pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                    pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
+                    show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
 
             st.subheader("👥 Total de Pequenos-Almoços (dia)")
             st.metric("Total de pessoas", total_pa_dia)
@@ -1588,7 +1596,8 @@ if not df_final.empty:
                         nome = r["Nome"]
                         aloj = r["Alojamento"]
                         unidade = unidade_curta(r["Unidade"])
-                        pax = int(r["Pessoas"])
+                        pax_num = pd.to_numeric(r.get("Pessoas"), errors="coerce")
+                        pax = int(pax_num) if pd.notna(pax_num) else 0
                         is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
                         nota = r.get("Notas", None)
                         nota_texto = str(nota).strip() if nota_valida(nota) else ""
@@ -1619,7 +1628,8 @@ if not df_final.empty:
                         nome = r["Nome"]
                         aloj = r["Alojamento"]
                         unidade = unidade_curta(r["Unidade"])
-                        pax = int(r["Pessoas"])
+                        pax_num = pd.to_numeric(r.get("Pessoas"), errors="coerce")
+                        pax = int(pax_num) if pd.notna(pax_num) else 0
                         is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
                         nota = r.get("Notas", None)
                         nota_texto = str(nota).strip() if nota_valida(nota) else ""
