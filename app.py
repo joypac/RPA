@@ -1324,28 +1324,28 @@ with tab_inserir:
             _nota2 = f" · {_q2['notas']}" if _q2.get("notas") else ""
             _is_selected = st.session_state["inserir_selected_quarto_idx"] == _qi2
             _row_txt = f"{_b2} {_q2['alojamento']} — {_q2['unidade']} — {_p2_str}{_pax2}{_nota2}"
-                _qcol1, _qcol2 = st.columns([4.5, 1])
-                with _qcol1:
-                    if st.button(
-                        f"▾ {_row_txt}" if _is_selected else _row_txt,
-                        key=f"sel_quarto_{_qi2}",
-                        use_container_width=True,
-                    ):
-                        st.session_state["inserir_selected_quarto_idx"] = None if _is_selected else _qi2
-                        st.rerun()
-                with _qcol2:
-                    if st.button("🗑️", key=f"quick_rm_quarto_{_qi2}", use_container_width=True, help="Remover quarto"):
-                        st.session_state["quartos_disponiveis"].pop(_qi2)
-                        save_quartos(st.session_state["quartos_disponiveis"])
+            _qcol1, _qcol2 = st.columns([4.5, 1])
+            with _qcol1:
+                if st.button(
+                    f"▾ {_row_txt}" if _is_selected else _row_txt,
+                    key=f"sel_quarto_{_qi2}",
+                    use_container_width=True,
+                ):
+                    st.session_state["inserir_selected_quarto_idx"] = None if _is_selected else _qi2
+                    st.rerun()
+            with _qcol2:
+                if st.button("🗑️", key=f"quick_rm_quarto_{_qi2}", use_container_width=True, help="Remover quarto"):
+                    st.session_state["quartos_disponiveis"].pop(_qi2)
+                    save_quartos(st.session_state["quartos_disponiveis"])
+                    st.session_state["inserir_selected_quarto_idx"] = None
+                    st.rerun()
+
+            if st.session_state["inserir_selected_quarto_idx"] == _qi2:
+                _r1 = st.columns(1)[0]
+                with _r1:
+                    if st.button("Cancelar", key=f"cancel_quarto_{_qi2}", use_container_width=True):
                         st.session_state["inserir_selected_quarto_idx"] = None
                         st.rerun()
-
-                if st.session_state["inserir_selected_quarto_idx"] == _qi2:
-                    _r1 = st.columns(1)[0]
-                    with _r1:
-                        if st.button("Cancelar", key=f"cancel_quarto_{_qi2}", use_container_width=True):
-                            st.session_state["inserir_selected_quarto_idx"] = None
-                            st.rerun()
     else:
         st.caption("Sem quartos disponíveis registados.")
 
