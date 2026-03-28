@@ -1574,8 +1574,6 @@ with tab_inserir:
         st.session_state["qf_quantidade"] = 1
     if st.session_state.pop("qf_quantidade_reset", False):
         st.session_state["qf_quantidade"] = 1
-    if st.session_state.pop("qf_quantidade_increment", False):
-        st.session_state["qf_quantidade"] = int(st.session_state.get("qf_quantidade", 1)) + 1
 
     with st.form("quartos_form", clear_on_submit=True):
         qf1, qf2, qf3 = st.columns(3)
@@ -1599,16 +1597,7 @@ with tab_inserir:
                 key="qf_quantidade",
                 help="Se Unidade for Quarto/Cama com número, adiciona em sequência.",
             )
-        st.caption("Usa o botão + para aumentar rapidamente a quantidade.")
-        qb1, qb2 = st.columns([1.2, 3])
-        with qb1:
-            qf_plus = st.form_submit_button("➕")
-        with qb2:
-            qf_submit = st.form_submit_button("Adicionar quarto(s) disponível(eis)")
-
-    if qf_plus:
-        st.session_state["qf_quantidade_increment"] = True
-        st.rerun()
+        qf_submit = st.form_submit_button("Adicionar quarto(s) disponível(eis)")
 
     if qf_submit:
         unidades_para_adicionar = expand_unidade_sequence(qf_unidade, qf_quantidade)
