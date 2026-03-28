@@ -4,6 +4,7 @@ import altair as alt
 from datetime import datetime, timedelta, date
 import json
 import html
+import hmac
 from pathlib import Path
 
 st.set_page_config(
@@ -11,6 +12,32 @@ st.set_page_config(
     page_icon="🌅",
     layout="wide",
 )
+
+SITE_PASSWORD = st.secrets.get("SITE_PASSWORD", "Almograve2026")
+
+
+def require_password():
+    if st.session_state.get("is_authenticated", False):
+        return
+
+    st.title("Acesso protegido")
+    st.write("Insere a palavra-passe para entrar na aplicação.")
+
+    with st.form("login_form"):
+        typed_password = st.text_input("Palavra-passe", type="password")
+        login_submit = st.form_submit_button("Entrar")
+
+    if login_submit:
+        if hmac.compare_digest(str(typed_password), str(SITE_PASSWORD)):
+            st.session_state["is_authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Palavra-passe incorreta.")
+
+    st.stop()
+
+
+require_password()
 
 # Painel central de cores: muda apenas aqui para atualizar todo o visual.
 THEME = {
@@ -1074,8 +1101,8 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.session_state["pending_overcrowding_messages"] = []
         st.rerun()
 
-tab_acesso_rapido, tab_reservas, tab_pa, tab_importar, tab_inserir, tab_guardar = st.tabs(
-    ["Acesso rápido", "Reservas", "Pequenos almoços", "Importar", "Inserir", "Limpar"]
+tab_acesso_rapido, tab_reservas, tab_pa, tab_inserir, tab_importar, tab_guardar = st.tabs(
+    ["Acesso rápido", "Reservas", "Pequenos almoços", "Inserir", "Importar", "Limpar"]
 )
 
 uploaded_files = []
