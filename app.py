@@ -510,6 +510,33 @@ def total_pessoas_col(df):
     return int(pd.to_numeric(df["Pessoas"], errors="coerce").fillna(0).sum())
 
 
+def normalize_pessoas_value(value):
+    import re
+
+    if pd.isna(value):
+        return 1
+
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.notna(numeric):
+        return max(1, int(numeric))
+
+    txt = str(value).strip()
+    match = re.search(r"\d+", txt)
+    if match:
+        return max(1, int(match.group(0)))
+
+    return 1
+
+
+def normalize_pessoas_column(df):
+    if df.empty or "Pessoas" not in df.columns:
+        return df
+
+    normalized = df.copy()
+    normalized["Pessoas"] = normalized["Pessoas"].apply(normalize_pessoas_value)
+    return normalized
+
+
 def total_hospedes_esta_noite(df, ref_date=None):
     return total_pessoas_col(df)
 
@@ -1349,14 +1376,12 @@ with tab_importar:
                     if best_idx is not None:
                         return best_idx
 
-                    if default_idx is not None and default_idx < len(cols):
-                        return default_idx
                     return None
 
                 nome_idx = _find_col_idx(df, [r"\bnome\b", r"guest", r"h[oó]spede", r"cliente"], default_idx=2)
                 checkin_idx = _find_col_idx(df, [r"check\s*[-_ ]?in", r"entrada"], default_idx=3)
                 checkout_idx = _find_col_idx(df, [r"check\s*[-_ ]?out", r"sa[ií]da"], default_idx=4)
-                pessoas_idx = _find_people_col_idx(df, default_idx=8)
+                pessoas_idx = _find_people_col_idx(df)
                 unidade_idx = _find_col_idx(
                     df,
                     [r"\bunit\s*type\b", r"\bunit\b", r"\bunidade\b", r"\bquarto\b", r"\broom\b", r"apart", r"accomm", r"\bcama\b", r"\bbed\b"],
@@ -1369,11 +1394,17 @@ with tab_importar:
                     else pd.Series([None] * len(df), index=df.index)
                 )
 
+                pessoas_series = (
+                    df.iloc[:, pessoas_idx].apply(normalize_pessoas_value)
+                    if pessoas_idx is not None
+                    else pd.Series([1] * len(df), index=df.index)
+                )
+
                 df_clean = pd.DataFrame({
                     "Nome": df.iloc[:, nome_idx] if nome_idx is not None else "",
                     "Check-in": df.iloc[:, checkin_idx] if checkin_idx is not None else pd.NaT,
                     "Check-out": df.iloc[:, checkout_idx] if checkout_idx is not None else pd.NaT,
-                    "Pessoas": df.iloc[:, pessoas_idx] if pessoas_idx is not None else 1,
+                    "Pessoas": pessoas_series,
                     "Unidade": unidade_series,
                     "Alojamento": normalize_alojamento(alojamento),
                     "Origem": "Importada",
@@ -1554,8 +1585,10 @@ reservas_atualizadas_count = 0
 
 if import_submit and all_data:
     df_importado = pd.concat(all_data, ignore_index=True)
+    df_importado = normalize_pessoas_column(df_importado)
     df_final, novas_reservas_count, reservas_atualizadas_count = merge_imported_reservas(df_guardado, df_importado)
     df_final = sanitize_optional_columns(df_final)
+    df_final = normalize_pessoas_column(df_final)
     st.session_state["reservas_df"] = df_final
     save_reservas(df_final)
 elif not df_guardado.empty:
@@ -1563,6 +1596,7 @@ elif not df_guardado.empty:
 
 if not df_final.empty:
     df_final = sanitize_optional_columns(df_final)
+    df_final = normalize_pessoas_column(df_final)
     if "Origem" not in df_final.columns:
         # Reservas antigas (sem origem) passam a importadas para permitir limpeza seletiva.
         df_final["Origem"] = "Importada"
