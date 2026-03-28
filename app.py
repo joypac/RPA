@@ -1572,6 +1572,10 @@ with tab_inserir:
 
     if "qf_quantidade" not in st.session_state:
         st.session_state["qf_quantidade"] = 1
+    if st.session_state.pop("qf_quantidade_reset", False):
+        st.session_state["qf_quantidade"] = 1
+    if st.session_state.pop("qf_quantidade_increment", False):
+        st.session_state["qf_quantidade"] = int(st.session_state.get("qf_quantidade", 1)) + 1
 
     with st.form("quartos_form", clear_on_submit=True):
         qf1, qf2, qf3 = st.columns(3)
@@ -1603,7 +1607,7 @@ with tab_inserir:
             qf_submit = st.form_submit_button("Adicionar quarto(s) disponível(eis)")
 
     if qf_plus:
-        st.session_state["qf_quantidade"] = int(st.session_state.get("qf_quantidade", 1)) + 1
+        st.session_state["qf_quantidade_increment"] = True
         st.rerun()
 
     if qf_submit:
@@ -1638,7 +1642,7 @@ with tab_inserir:
             st.warning(f"{added_count} adicionado(s), {skipped_count} já existiam.")
         else:
             st.info("Nenhum quarto adicionado (já existiam todos).")
-        st.session_state["qf_quantidade"] = 1
+        st.session_state["qf_quantidade_reset"] = True
         st.rerun()
 
     _quartos_lista = st.session_state.get("quartos_disponiveis", [])
