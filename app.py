@@ -176,6 +176,30 @@ def normalize_alojamento(value):
     txt = re.sub(r"^[^A-Z0-9]+", "", txt)
     return txt
 
+
+def suggest_alojamento_from_filename(filename):
+    suggested = normalize_alojamento(filename)
+    if suggested in ALOJAMENTOS:
+        return suggested
+    return ALOJAMENTOS[0]
+
+
+def expand_unidade_sequence(base_unidade, quantidade):
+    import re
+
+    quantidade = max(1, int(quantidade))
+    base_txt = str(base_unidade).strip()
+    if quantidade == 1 or not base_txt:
+        return [base_txt]
+
+    m = re.match(r"^(quarto|cama)\s*(\d+)$", base_txt, flags=re.IGNORECASE)
+    if not m:
+        return [base_txt]
+
+    prefix = m.group(1).capitalize()
+    start = int(m.group(2))
+    return [f"{prefix} {n}" for n in range(start, start + quantidade)]
+
 # ── Supabase (sincronização na nuvem, opcional) ──────────────────────────────
 USE_SUPABASE = False
 _supabase_client = None
@@ -982,10 +1006,13 @@ def _render_reservas_editor_impl(suggested_times):
 
     _fill_cols = [c for c in display_df.columns if c not in ("Hora PA", "PA pago", "Notas")]
     display_df[_fill_cols] = display_df[_fill_cols].fillna("")
+    # Sem scroll interno: usa apenas o scroll da página.
+    editor_height = max(240, 42 + (len(display_df) + 1) * 35)
     edited_from_table = st.data_editor(
         display_df,
         key="reservas_editor",
         width='stretch',
+        height=editor_height,
         hide_index=True,
         disabled=["Nome", "Check-in/Check-out", "Pessoas", "Unidade", "Alojamento"],
         column_config={
@@ -1328,9 +1355,13 @@ with tab_importar:
 
             st.write(f"Ficheiro: {file.name}")
 
+            suggested_aloj = suggest_alojamento_from_filename(file.name)
+            suggested_idx = ALOJAMENTOS.index(suggested_aloj) if suggested_aloj in ALOJAMENTOS else 0
+
             alojamento = st.selectbox(
                 f"Alojamento para {file.name}",
                 ALOJAMENTOS,
+                index=suggested_idx,
                 key=file.name
             )
 
@@ -1548,23 +1579,47 @@ with tab_inserir:
             qf_unidade = st.selectbox("Unidade", _unidade_opcoes, help="Camas disponíveis apenas no ABH")
         with qf3:
             qf_preco = st.number_input("Preço (€)", min_value=0.0, step=5.0, format="%.0f")
-        qf4, qf5 = st.columns(2)
+        qf4, qf5, qf6 = st.columns(3)
         with qf4:
             qf_pessoas = st.number_input("Pessoas (opcional)", min_value=0, step=1, value=0)
         with qf5:
             qf_notas = st.text_input("Notas (opcional)", placeholder="ex: casa de banho partilhada")
+        with qf6:
+            qf_quantidade = st.number_input("Quantidade", min_value=1, step=1, value=1, help="Se Unidade for Quarto/Cama com número, adiciona em sequência.")
         qf_submit = st.form_submit_button("Adicionar quarto disponível")
 
     if qf_submit:
-        st.session_state["quartos_disponiveis"].append({
-            "alojamento": qf_alojamento,
-            "unidade": qf_unidade,
-            "preco": float(qf_preco),
-            "pessoas": int(qf_pessoas) if qf_pessoas > 0 else None,
-            "notas": str(qf_notas).strip() or None,
-        })
+        unidades_para_adicionar = expand_unidade_sequence(qf_unidade, qf_quantidade)
+        existentes = {
+            (str(item.get("alojamento", "")).strip().upper(), str(item.get("unidade", "")).strip().lower())
+            for item in st.session_state["quartos_disponiveis"]
+        }
+
+        added_count = 0
+        skipped_count = 0
+        for unidade_item in unidades_para_adicionar:
+            key_unidade = (str(qf_alojamento).strip().upper(), str(unidade_item).strip().lower())
+            if key_unidade in existentes:
+                skipped_count += 1
+                continue
+
+            st.session_state["quartos_disponiveis"].append({
+                "alojamento": qf_alojamento,
+                "unidade": unidade_item,
+                "preco": float(qf_preco),
+                "pessoas": int(qf_pessoas) if qf_pessoas > 0 else None,
+                "notas": str(qf_notas).strip() or None,
+            })
+            existentes.add(key_unidade)
+            added_count += 1
+
         save_quartos(st.session_state["quartos_disponiveis"])
-        st.success(f"{qf_alojamento} — {qf_unidade} adicionado.")
+        if added_count > 0 and skipped_count == 0:
+            st.success(f"{added_count} quarto(s) adicionado(s) em {qf_alojamento}.")
+        elif added_count > 0 and skipped_count > 0:
+            st.warning(f"{added_count} adicionado(s), {skipped_count} já existiam.")
+        else:
+            st.info("Nenhum quarto adicionado (já existiam todos).")
         st.rerun()
 
     _quartos_lista = st.session_state.get("quartos_disponiveis", [])
@@ -1596,11 +1651,54 @@ with tab_inserir:
                     st.rerun()
 
             if st.session_state["inserir_selected_quarto_idx"] == _qi2:
-                _r1 = st.columns(1)[0]
-                with _r1:
-                    if st.button("Cancelar", key=f"cancel_quarto_{_qi2}", use_container_width=True):
+                with st.form(key=f"edit_quarto_form_{_qi2}"):
+                    eq1, eq2, eq3 = st.columns(3)
+                    with eq1:
+                        edit_unidade_q = st.text_input("Unidade", value=str(_q2.get("unidade", "") or ""))
+                    with eq2:
+                        edit_preco_q = st.number_input(
+                            "Preço (€)",
+                            min_value=0.0,
+                            step=5.0,
+                            value=float(_q2.get("preco", 0.0) or 0.0),
+                            format="%.0f",
+                        )
+                    with eq3:
+                        edit_pessoas_q = st.number_input(
+                            "Pessoas (opcional)",
+                            min_value=0,
+                            step=1,
+                            value=int(_q2.get("pessoas") or 0),
+                        )
+
+                    edit_notas_q = st.text_input("Notas (opcional)", value=str(_q2.get("notas", "") or ""))
+
+                    eb1, eb2 = st.columns(2)
+                    with eb1:
+                        save_edit_q = st.form_submit_button("Guardar alterações")
+                    with eb2:
+                        cancel_edit_q = st.form_submit_button("Cancelar")
+
+                if save_edit_q:
+                    nova_unidade_q = str(edit_unidade_q).strip()
+                    if not nova_unidade_q:
+                        show_pink_alert("A unidade não pode ficar vazia.")
+                    else:
+                        st.session_state["quartos_disponiveis"][_qi2] = {
+                            "alojamento": _q2.get("alojamento"),
+                            "unidade": nova_unidade_q,
+                            "preco": float(edit_preco_q),
+                            "pessoas": int(edit_pessoas_q) if edit_pessoas_q > 0 else None,
+                            "notas": str(edit_notas_q).strip() or None,
+                        }
+                        save_quartos(st.session_state["quartos_disponiveis"])
                         st.session_state["inserir_selected_quarto_idx"] = None
+                        st.success("Quarto atualizado com sucesso.")
                         st.rerun()
+
+                if cancel_edit_q:
+                    st.session_state["inserir_selected_quarto_idx"] = None
+                    st.rerun()
     else:
         st.caption("Sem quartos disponíveis registados.")
 
