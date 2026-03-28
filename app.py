@@ -1221,19 +1221,49 @@ with tab_importar:
                     import re
                     if pd.isna(texto):
                         return texto
-                    # Remove tudo o que estiver entre parênteses (inclusive os parênteses)
-                    texto = re.sub(r"\s*\([^)]*\)", "", str(texto))
+                    # Mantém o conteúdo entre parênteses (pode conter info útil como "twin").
+                    texto = re.sub(r"[()]", "", str(texto))
                     # Normaliza espaços múltiplos e vírgulas duplicadas
                     texto = re.sub(r",\s*,", ",", texto)
+                    texto = re.sub(r"\s*;\s*", ", ", texto)
                     texto = re.sub(r",\s*$", "", texto.strip())
+                    texto = re.sub(r"\s+", " ", texto)
                     return texto.strip()
 
+                def _find_col_idx(df_in, patterns, default_idx=None):
+                    import re
+
+                    for i, col_name in enumerate(df_in.columns):
+                        col_txt = str(col_name).strip().lower()
+                        if any(re.search(p, col_txt, flags=re.IGNORECASE) for p in patterns):
+                            return i
+
+                    if default_idx is not None and default_idx < len(df_in.columns):
+                        return default_idx
+                    return None
+
+                nome_idx = _find_col_idx(df, [r"\bnome\b", r"guest", r"h[oó]spede", r"cliente"], default_idx=2)
+                checkin_idx = _find_col_idx(df, [r"check\s*[-_ ]?in", r"entrada"], default_idx=3)
+                checkout_idx = _find_col_idx(df, [r"check\s*[-_ ]?out", r"sa[ií]da"], default_idx=4)
+                pessoas_idx = _find_col_idx(df, [r"\bpessoas\b", r"guests?", r"h[oó]spedes?", r"occup"], default_idx=8)
+                unidade_idx = _find_col_idx(
+                    df,
+                    [r"\bunit\s*type\b", r"\bunit\b", r"\bunidade\b", r"\bquarto\b", r"\broom\b", r"apart", r"accomm", r"\bcama\b", r"\bbed\b"],
+                    default_idx=22,
+                )
+
+                unidade_series = (
+                    df.iloc[:, unidade_idx].apply(limpar_unidade)
+                    if unidade_idx is not None
+                    else pd.Series([None] * len(df), index=df.index)
+                )
+
                 df_clean = pd.DataFrame({
-                    "Nome": df.iloc[:, 2],
-                    "Check-in": df.iloc[:, 3],
-                    "Check-out": df.iloc[:, 4],
-                    "Pessoas": df.iloc[:, 8],
-                    "Unidade": df.iloc[:, 22].apply(limpar_unidade),
+                    "Nome": df.iloc[:, nome_idx] if nome_idx is not None else "",
+                    "Check-in": df.iloc[:, checkin_idx] if checkin_idx is not None else pd.NaT,
+                    "Check-out": df.iloc[:, checkout_idx] if checkout_idx is not None else pd.NaT,
+                    "Pessoas": df.iloc[:, pessoas_idx] if pessoas_idx is not None else 1,
+                    "Unidade": unidade_series,
                     "Alojamento": normalize_alojamento(alojamento)
                 })
                 all_data.append(df_clean)
