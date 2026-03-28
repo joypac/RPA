@@ -146,6 +146,7 @@ DISPLAY_COL_ORDER = [
     "Check-out",
     "Pessoas",
     "Unidade",
+    "Origem",
     "Hora PA",
     "PA pago",
     "Notas",
@@ -708,6 +709,7 @@ def render_quick_access_tab(df, suggested_times):
                                 "Pessoas": int(_ins_pessoas),
                                 "Check-in": _today,
                                 "Check-out": _tomorrow,
+                                "Origem": "Direta",
                                 "Hora PA": None if _ins_hora == "nenhuma" else _ins_hora,
                                 "Notas": str(_ins_notas).strip() or None,
                             }])
@@ -1264,7 +1266,8 @@ with tab_importar:
                     "Check-out": df.iloc[:, checkout_idx] if checkout_idx is not None else pd.NaT,
                     "Pessoas": df.iloc[:, pessoas_idx] if pessoas_idx is not None else 1,
                     "Unidade": unidade_series,
-                    "Alojamento": normalize_alojamento(alojamento)
+                    "Alojamento": normalize_alojamento(alojamento),
+                    "Origem": "Importada",
                 })
                 all_data.append(df_clean)
             except Exception as e:
@@ -1350,6 +1353,7 @@ with tab_inserir:
                         "Pessoas": int(manual_pessoas),
                         "Unidade": _unidade_txt,
                         "Alojamento": normalize_alojamento(manual_alojamento),
+                        "Origem": "Direta",
                         "Hora PA": None if not manual_hora_pa or manual_hora_pa == "nenhuma" else manual_hora_pa,
                         "PA pago": "Sim" if manual_pa_pago == "Sim" else None,
                         "Notas": str(manual_notas).strip() if str(manual_notas).strip() else None,
@@ -1449,6 +1453,16 @@ elif not df_guardado.empty:
 
 if not df_final.empty:
     df_final = sanitize_optional_columns(df_final)
+    if "Origem" not in df_final.columns:
+        # Reservas antigas (sem origem) passam a importadas para permitir limpeza seletiva.
+        df_final["Origem"] = "Importada"
+    else:
+        df_final["Origem"] = (
+            df_final["Origem"]
+            .astype(str)
+            .str.strip()
+            .replace({"": "Importada", "none": "Importada", "nan": "Importada", "None": "Importada"})
+        )
     suggested_times = build_suggested_times()
 
     if "Hora PA" not in df_final.columns:
@@ -1649,31 +1663,60 @@ if not df_final.empty:
                 st.info("Não foram encontradas reservas novas no ficheiro importado.")
 
     with tab_guardar:
-        if "confirm_clear" not in st.session_state:
-            st.session_state["confirm_clear"] = False
+        if "clear_mode" not in st.session_state:
+            st.session_state["clear_mode"] = None
 
-        if st.button("Limpar tudo"):
-            st.session_state["confirm_clear"] = True
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("Limpar tudo", use_container_width=True):
+                st.session_state["clear_mode"] = "all"
+        with b2:
+            if st.button("Limpar reservas diretas", use_container_width=True):
+                st.session_state["clear_mode"] = "diretas"
+        with b3:
+            if st.button("Limpar reservas importadas", use_container_width=True):
+                st.session_state["clear_mode"] = "importadas"
 
-        if st.session_state["confirm_clear"]:
-            st.warning("Confirma que queres apagar todas as reservas guardadas?")
+        clear_mode = st.session_state.get("clear_mode")
+        if clear_mode:
+            if clear_mode == "all":
+                st.warning("Confirma que queres apagar todas as reservas guardadas?")
+            elif clear_mode == "diretas":
+                st.warning("Confirma que queres apagar apenas as reservas diretas?")
+            elif clear_mode == "importadas":
+                st.warning("Confirma que queres apagar apenas as reservas importadas?")
+
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("Confirmar apagar tudo", type="primary"):
-                    if USE_SUPABASE:
-                        save_reservas(pd.DataFrame())
+                if st.button("Confirmar", type="primary", use_container_width=True):
+                    current_df = st.session_state.get("reservas_df", pd.DataFrame()).copy()
+                    if not current_df.empty and "Origem" not in current_df.columns:
+                        current_df["Origem"] = "Importada"
+
+                    if clear_mode == "all":
+                        updated_df = pd.DataFrame()
+                    elif clear_mode == "diretas":
+                        updated_df = current_df[
+                            current_df["Origem"].astype(str).str.lower().str.strip() != "direta"
+                        ].copy()
                     else:
-                        st.info("Supabase não ativo. O botão limpar apaga apenas dados da nuvem.")
-                    st.session_state["current_df"] = pd.DataFrame()
-                    st.session_state["reservas_df"] = pd.DataFrame()
+                        updated_df = current_df[
+                            current_df["Origem"].astype(str).str.lower().str.strip() != "importada"
+                        ].copy()
+
+                    updated_df = sanitize_optional_columns(updated_df)
+                    st.session_state["current_df"] = updated_df.copy()
+                    st.session_state["reservas_df"] = updated_df.copy()
+                    st.session_state["reservas_editor_df"] = updated_df.copy()
                     st.session_state["pending_overcrowding_messages"] = []
                     st.session_state["show_overcrowding_ack"] = False
-                    st.session_state["confirm_clear"] = False
-                    st.success("Reservas apagadas com sucesso.")
+                    st.session_state["clear_mode"] = None
+                    save_reservas(updated_df)
+                    st.success("Limpeza concluída com sucesso.")
                     st.rerun()
             with c2:
-                if st.button("Cancelar"):
-                    st.session_state["confirm_clear"] = False
+                if st.button("Cancelar", use_container_width=True):
+                    st.session_state["clear_mode"] = None
 else:
     with tab_acesso_rapido:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
