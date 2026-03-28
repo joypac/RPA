@@ -1307,10 +1307,56 @@ with tab_importar:
                         return default_idx
                     return None
 
+                def _find_people_col_idx(df_in, default_idx=None):
+                    import re
+
+                    cols = list(df_in.columns)
+
+                    # 1) Prioriza cabeçalhos exatos mais comuns para contagem de pessoas.
+                    exact_patterns = [
+                        r"^people$",
+                        r"^pessoas?$",
+                        r"^guests?$",
+                        r"^occupancy$",
+                        r"^pax$",
+                        r"^n[úu]mero\s+de\s+pessoas$",
+                    ]
+                    for i, col_name in enumerate(cols):
+                        col_txt = str(col_name).strip().lower()
+                        if any(re.search(p, col_txt, flags=re.IGNORECASE) for p in exact_patterns):
+                            return i
+
+                    # 2) Caso não seja exato, escolhe o candidato mais "numérico" e evita colunas de nome/titular.
+                    include_patterns = [r"\bpeople\b", r"\bpessoas?\b", r"\bguests?\b", r"\boccup", r"\bpax\b", r"\badults?\b"]
+                    exclude_patterns = [r"name", r"nome", r"titular", r"holder", r"cliente", r"guest\s*name"]
+
+                    best_idx = None
+                    best_score = -1.0
+
+                    for i, col_name in enumerate(cols):
+                        col_txt = str(col_name).strip().lower()
+                        if any(re.search(p, col_txt, flags=re.IGNORECASE) for p in exclude_patterns):
+                            continue
+                        if not any(re.search(p, col_txt, flags=re.IGNORECASE) for p in include_patterns):
+                            continue
+
+                        series = pd.to_numeric(df_in.iloc[:, i], errors="coerce")
+                        score = float(series.notna().mean()) if len(series) > 0 else 0.0
+                        if score > best_score:
+                            best_score = score
+                            best_idx = i
+
+                    if best_idx is not None:
+                        return best_idx
+
+                    if default_idx is not None and default_idx < len(cols):
+                        return default_idx
+                    return None
+
                 nome_idx = _find_col_idx(df, [r"\bnome\b", r"guest", r"h[oó]spede", r"cliente"], default_idx=2)
                 checkin_idx = _find_col_idx(df, [r"check\s*[-_ ]?in", r"entrada"], default_idx=3)
                 checkout_idx = _find_col_idx(df, [r"check\s*[-_ ]?out", r"sa[ií]da"], default_idx=4)
-                pessoas_idx = _find_col_idx(df, [r"\bpessoas\b", r"\bpeople\b", r"guests?", r"h[oó]spedes?", r"occup"], default_idx=8)
+                pessoas_idx = _find_people_col_idx(df, default_idx=8)
                 unidade_idx = _find_col_idx(
                     df,
                     [r"\bunit\s*type\b", r"\bunit\b", r"\bunidade\b", r"\bquarto\b", r"\broom\b", r"apart", r"accomm", r"\bcama\b", r"\bbed\b"],
