@@ -1092,8 +1092,10 @@ def _render_reservas_editor_impl(suggested_times):
     notas_default = str(current_notas) if pd.notna(current_notas) else ""
 
     unidade_default = "" if pd.isna(editor_df.loc[reserva_idx, "Unidade"]) else str(editor_df.loc[reserva_idx, "Unidade"]).strip()
+    pessoas_default_num = pd.to_numeric(editor_df.loc[reserva_idx, "Pessoas"], errors="coerce")
+    pessoas_default = int(pessoas_default_num) if pd.notna(pessoas_default_num) and int(pessoas_default_num) > 0 else 1
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1.4])
+    c1, c2, c3, c4, c5 = st.columns([1, 1, 1.2, 1.5, 1.4])
     with c1:
         nova_hora = st.selectbox(
             "Hora PA",
@@ -1111,13 +1113,21 @@ def _render_reservas_editor_impl(suggested_times):
             key=f"pa_pago_update_{reserva_idx}",
         )
     with c3:
+        novas_pessoas = st.number_input(
+            "Pessoas",
+            min_value=1,
+            step=1,
+            value=pessoas_default,
+            key=f"pessoas_update_{reserva_idx}",
+        )
+    with c4:
         novas_notas = st.text_input(
             "Notas",
             value=notas_default,
             key=f"notas_update_{reserva_idx}",
             placeholder="Escreve uma nota...",
         )
-    with c4:
+    with c5:
         nova_unidade = st.text_input(
             "Quarto/Unidade",
             value=unidade_default,
@@ -1129,6 +1139,7 @@ def _render_reservas_editor_impl(suggested_times):
         df_before_update = editor_df.copy()
         editor_df.loc[reserva_idx, "Hora PA"] = None if not nova_hora or nova_hora == "nenhuma" else nova_hora
         editor_df.loc[reserva_idx, "PA pago"] = None if not novo_pago or novo_pago == "Não" else novo_pago
+        editor_df.loc[reserva_idx, "Pessoas"] = int(novas_pessoas)
         editor_df.loc[reserva_idx, "Notas"] = None if not str(novas_notas).strip() or str(novas_notas).strip().lower() == "nenhuma" else novas_notas
         editor_df.loc[reserva_idx, "Unidade"] = None if not str(nova_unidade).strip() else str(nova_unidade).strip()
         editor_df = sanitize_optional_columns(editor_df)
