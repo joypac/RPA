@@ -14,10 +14,11 @@ st.set_page_config(
 )
 
 SITE_PASSWORD = st.secrets.get("SITE_PASSWORD", "Almograve2026")
+AUTH_ENABLED = False
 
 
 def require_password():
-    if st.session_state.get("is_authenticated", False):
+    if not AUTH_ENABLED or st.session_state.get("is_authenticated", False):
         return
 
     st.title("Acesso protegido")
