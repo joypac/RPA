@@ -6,6 +6,7 @@ import json
 import html
 import hmac
 from pathlib import Path
+import os
 
 st.set_page_config(
     page_title="Gestão de Reservas",
@@ -137,8 +138,9 @@ st.markdown(
         unsafe_allow_html=True,
 )
 
-RESERVAS_FILE = Path("reservas.json")
-QUARTOS_FILE = Path("quartos_disponiveis.json")
+APP_DIR = Path(__file__).resolve().parent
+RESERVAS_FILE = APP_DIR / "reservas.json"
+QUARTOS_FILE = APP_DIR / "quartos_disponiveis.json"
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 IMPORT_MATCH_COLS = ["Nome", "Check-in", "Alojamento"]
 IMPORT_UPDATE_COLS = ["Check-out", "Pessoas", "Unidade"]
@@ -236,6 +238,40 @@ def show_pink_alert(message):
     )
 
 
+def _json_candidates_for(filename):
+    """Prioritize the app folder, then accept legacy files saved from another cwd."""
+    candidates = [APP_DIR / filename]
+    cwd_candidate = Path.cwd() / filename
+    try:
+        if cwd_candidate.resolve() != (APP_DIR / filename).resolve():
+            candidates.append(cwd_candidate)
+    except Exception:
+        if str(cwd_candidate) != str(APP_DIR / filename):
+            candidates.append(cwd_candidate)
+    return candidates
+
+
+def _atomic_write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp_path.replace(path)
+
+
+def _parse_reservas_payload(data):
+    if isinstance(data, dict):
+        last_saved_at = data.get("last_saved_at")
+        reservas = data.get("reservas", [])
+        if isinstance(reservas, list):
+            return pd.DataFrame(reservas), last_saved_at
+    if isinstance(data, list):
+        return pd.DataFrame(data), None
+    raise ValueError("Formato de reservas inválido")
+
+
 def load_reservas():
     if USE_SUPABASE:
         try:
@@ -271,25 +307,36 @@ def load_reservas():
             show_pink_alert(f"Erro ao carregar do Supabase: {e}")
         return pd.DataFrame()
 
-    if not RESERVAS_FILE.exists():
-        return pd.DataFrame()
+    parse_errors = []
+    for candidate in _json_candidates_for("reservas.json"):
+        if not candidate.exists():
+            continue
 
-    try:
-        with RESERVAS_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            last_saved_at = data.get("last_saved_at")
+        try:
+            with candidate.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            df_loaded, last_saved_at = _parse_reservas_payload(data)
             if last_saved_at:
                 parsed_last_saved_at = pd.to_datetime(last_saved_at, errors="coerce")
                 if pd.notna(parsed_last_saved_at):
                     st.session_state["last_saved_at"] = parsed_last_saved_at.to_pydatetime()
-            reservas = data.get("reservas", [])
-            if isinstance(reservas, list):
-                return pd.DataFrame(reservas)
-        if isinstance(data, list):
-            return pd.DataFrame(data)
-    except Exception as e:
-        show_pink_alert(f"Erro ao carregar reservas guardadas: {e}")
+
+            # Migra automaticamente para o ficheiro principal da app.
+            if candidate != RESERVAS_FILE:
+                save_reservas(df_loaded)
+                show_pink_alert(
+                    "Reservas recuperadas de um ficheiro antigo e migradas para a pasta da aplicação."
+                )
+
+            return df_loaded
+        except Exception as e:
+            parse_errors.append(f"{candidate}: {e}")
+
+    if parse_errors:
+        show_pink_alert(
+            "Erro ao carregar reservas guardadas: " + " | ".join(parse_errors)
+        )
 
     return pd.DataFrame()
 
@@ -314,24 +361,34 @@ def save_reservas(df):
         except Exception as e:
             show_pink_alert(f"Erro ao guardar no Supabase: {e}")
 
-    with RESERVAS_FILE.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(RESERVAS_FILE, payload)
     st.session_state["last_saved_at"] = saved_at
 
 
 def load_quartos():
-    if not QUARTOS_FILE.exists():
-        return []
-    try:
-        with QUARTOS_FILE.open("r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return []
+    parse_errors = []
+    for candidate in _json_candidates_for("quartos_disponiveis.json"):
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                if candidate != QUARTOS_FILE:
+                    save_quartos(data)
+                return data
+        except Exception as e:
+            parse_errors.append(f"{candidate}: {e}")
+
+    if parse_errors:
+        show_pink_alert(
+            "Erro ao carregar quartos guardados: " + " | ".join(parse_errors)
+        )
+    return []
 
 
 def save_quartos(quartos_list):
-    with QUARTOS_FILE.open("w", encoding="utf-8") as f:
-        json.dump(quartos_list, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(QUARTOS_FILE, quartos_list)
 
 
 def refresh_data_from_storage():
