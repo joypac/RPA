@@ -654,6 +654,45 @@ def _existing_date_options(df, column_name):
     return unique_dates
 
 
+def _choose_date_with_suggestions(label, suggestions, default_date, key_prefix):
+    use_manual = st.checkbox(
+        f"{label} manual",
+        value=not bool(suggestions),
+        key=f"{key_prefix}_manual",
+        help="Ativa para inserir a data manualmente.",
+    )
+
+    if suggestions and not use_manual:
+        safe_default = default_date if default_date in suggestions else suggestions[0]
+        return st.selectbox(
+            label,
+            options=suggestions,
+            index=suggestions.index(safe_default),
+            format_func=lambda d: d.strftime("%d/%m/%Y"),
+            help="Datas sugeridas com base nos outros hóspedes.",
+            key=f"{key_prefix}_suggested",
+        )
+
+    return st.date_input(
+        label,
+        value=default_date,
+        key=f"{key_prefix}_manual_date",
+    )
+
+
+def _is_duplicate_reserva(df_existing, reserva_row, ignore_index=None):
+    if df_existing.empty:
+        return False
+
+    target_key = _build_reserva_key(pd.Series(reserva_row))
+    for idx, existing_row in df_existing.iterrows():
+        if ignore_index is not None and idx == ignore_index:
+            continue
+        if _build_reserva_key(existing_row) == target_key:
+            return True
+    return False
+
+
 ALOJAMENTO_BADGES = {
     "ABH": "🟥",
     "AFH": "🟦",
@@ -893,7 +932,7 @@ def render_quick_access_tab(df, suggested_times):
                             show_pink_alert("Indica o nome do hóspede.")
                         else:
                             _base = st.session_state.get("reservas_df", pd.DataFrame()).copy()
-                            _nova = pd.DataFrame([{
+                            _nova_reserva = {
                                 "Nome": _ins_nome_txt,
                                 "Alojamento": _q["alojamento"],
                                 "Unidade": _q["unidade"],
@@ -903,18 +942,24 @@ def render_quick_access_tab(df, suggested_times):
                                 "Origem": "Direta",
                                 "Hora PA": None if _ins_hora == "nenhuma" else _ins_hora,
                                 "Notas": str(_ins_notas).strip() or None,
-                            }])
-                            _merged, _ = merge_new_reservas(_base, _nova)
-                            _merged = sanitize_optional_columns(_merged)
-                            st.session_state["reservas_df"] = _merged
-                            st.session_state["reservas_editor_df"] = _merged
-                            st.session_state["current_df"] = _merged
-                            save_reservas(_merged)
-                            st.session_state["quartos_disponiveis"].pop(_qi)
-                            save_quartos(st.session_state["quartos_disponiveis"])
-                            st.session_state["quick_inserir_quarto_idx"] = None
-                            st.success(f"{_ins_nome_txt} inserido no {_q['unidade']} ({_q['alojamento']}).")
-                            st.rerun()
+                            }
+                            if _is_duplicate_reserva(_base, _nova_reserva):
+                                show_pink_alert(
+                                    "Já existe uma reserva igual para este hóspede. Verifica nome/datas/unidade antes de guardar."
+                                )
+                            else:
+                                _nova = pd.DataFrame([_nova_reserva])
+                                _merged, _ = merge_new_reservas(_base, _nova)
+                                _merged = sanitize_optional_columns(_merged)
+                                st.session_state["reservas_df"] = _merged
+                                st.session_state["reservas_editor_df"] = _merged
+                                st.session_state["current_df"] = _merged
+                                save_reservas(_merged)
+                                st.session_state["quartos_disponiveis"].pop(_qi)
+                                save_quartos(st.session_state["quartos_disponiveis"])
+                                st.session_state["quick_inserir_quarto_idx"] = None
+                                st.success(f"{_ins_nome_txt} inserido no {_q['unidade']} ({_q['alojamento']}).")
+                                st.rerun()
         return
 
     pessoas_df = quick_df[quick_df["_aloj_norm"] == selected_aloj].copy()
@@ -1265,30 +1310,22 @@ def _render_reservas_editor_impl(suggested_times):
             ef4, ef5, ef6 = st.columns(3)
             with ef4:
                 checkin_atual = pd.to_datetime(row_edit.get("Check-in"), errors="coerce")
-                checkin_atual_date = checkin_atual.date() if pd.notna(checkin_atual) else None
-                if checkin_edit_options:
-                    ci_idx = checkin_edit_options.index(checkin_atual_date) if checkin_atual_date in checkin_edit_options else 0
-                    edit_checkin = st.selectbox(
-                        "Check-in",
-                        options=checkin_edit_options,
-                        index=ci_idx,
-                        format_func=lambda d: d.strftime("%d/%m/%Y"),
-                    )
-                else:
-                    edit_checkin = st.date_input("Check-in", value=checkin_atual_date)
+                checkin_atual_date = checkin_atual.date() if pd.notna(checkin_atual) else datetime.now().date()
+                edit_checkin = _choose_date_with_suggestions(
+                    "Check-in",
+                    checkin_edit_options,
+                    checkin_atual_date,
+                    key_prefix=f"edit_reserva_checkin_{reserva_idx}",
+                )
             with ef5:
                 checkout_atual = pd.to_datetime(row_edit.get("Check-out"), errors="coerce")
-                checkout_atual_date = checkout_atual.date() if pd.notna(checkout_atual) else None
-                if checkout_edit_options:
-                    co_idx = checkout_edit_options.index(checkout_atual_date) if checkout_atual_date in checkout_edit_options else 0
-                    edit_checkout = st.selectbox(
-                        "Check-out",
-                        options=checkout_edit_options,
-                        index=co_idx,
-                        format_func=lambda d: d.strftime("%d/%m/%Y"),
-                    )
-                else:
-                    edit_checkout = st.date_input("Check-out", value=checkout_atual_date)
+                checkout_atual_date = checkout_atual.date() if pd.notna(checkout_atual) else checkin_atual_date
+                edit_checkout = _choose_date_with_suggestions(
+                    "Check-out",
+                    checkout_edit_options,
+                    checkout_atual_date,
+                    key_prefix=f"edit_reserva_checkout_{reserva_idx}",
+                )
             with ef6:
                 edit_unidade = st.text_input("Unidade", value=str(row_edit.get("Unidade", "") or ""))
 
@@ -1326,23 +1363,38 @@ def _render_reservas_editor_impl(suggested_times):
             nome_edit_txt = str(edit_nome).strip()
             if not nome_edit_txt:
                 show_pink_alert("O nome não pode ficar vazio.")
+            elif edit_checkout < edit_checkin:
+                show_pink_alert("A data de check-out não pode ser anterior ao check-in.")
             else:
-                editor_df.loc[reserva_idx, "Nome"] = nome_edit_txt
-                editor_df.loc[reserva_idx, "Alojamento"] = edit_alojamento
-                editor_df.loc[reserva_idx, "Pessoas"] = int(edit_pessoas)
-                editor_df.loc[reserva_idx, "Check-in"] = edit_checkin
-                editor_df.loc[reserva_idx, "Check-out"] = edit_checkout
-                editor_df.loc[reserva_idx, "Unidade"] = str(edit_unidade).strip() or None
-                editor_df.loc[reserva_idx, "Hora PA"] = None if edit_hora_pa == "nenhuma" else edit_hora_pa
-                editor_df.loc[reserva_idx, "PA pago"] = "Sim" if edit_pa_pago == "Sim" else None
-                editor_df.loc[reserva_idx, "Notas"] = str(edit_notas).strip() or None
-                editor_df = sanitize_optional_columns(editor_df)
-                st.session_state["reservas_editor_df"] = editor_df.copy()
-                st.session_state["current_df"] = editor_df.copy()
-                st.session_state["reservas_df"] = editor_df.copy()
-                save_reservas(editor_df)
-                st.success("Reserva editada com sucesso.")
-                st.rerun()
+                _edit_candidate = {
+                    "Nome": nome_edit_txt,
+                    "Alojamento": edit_alojamento,
+                    "Unidade": str(edit_unidade).strip() or None,
+                    "Pessoas": int(edit_pessoas),
+                    "Check-in": edit_checkin,
+                    "Check-out": edit_checkout,
+                }
+                if _is_duplicate_reserva(editor_df, _edit_candidate, ignore_index=reserva_idx):
+                    show_pink_alert(
+                        "Esta edição criaria uma reserva duplicada (mesmo nome, alojamento, unidade, datas e número de pessoas já existe). Verifica os dados antes de guardar."
+                    )
+                else:
+                    editor_df.loc[reserva_idx, "Nome"] = nome_edit_txt
+                    editor_df.loc[reserva_idx, "Alojamento"] = edit_alojamento
+                    editor_df.loc[reserva_idx, "Pessoas"] = int(edit_pessoas)
+                    editor_df.loc[reserva_idx, "Check-in"] = edit_checkin
+                    editor_df.loc[reserva_idx, "Check-out"] = edit_checkout
+                    editor_df.loc[reserva_idx, "Unidade"] = str(edit_unidade).strip() or None
+                    editor_df.loc[reserva_idx, "Hora PA"] = None if edit_hora_pa == "nenhuma" else edit_hora_pa
+                    editor_df.loc[reserva_idx, "PA pago"] = "Sim" if edit_pa_pago == "Sim" else None
+                    editor_df.loc[reserva_idx, "Notas"] = str(edit_notas).strip() or None
+                    editor_df = sanitize_optional_columns(editor_df)
+                    st.session_state["reservas_editor_df"] = editor_df.copy()
+                    st.session_state["current_df"] = editor_df.copy()
+                    st.session_state["reservas_df"] = editor_df.copy()
+                    save_reservas(editor_df)
+                    st.success("Reserva editada com sucesso.")
+                    st.rerun()
 
     st.divider()
     st.subheader("🛏️ Ocupação desta noite")
@@ -1560,25 +1612,19 @@ with tab_inserir:
 
         mf4, mf5, mf6 = st.columns(3)
         with mf4:
-            if checkin_options:
-                manual_checkin = st.selectbox(
-                    "Check-in",
-                    options=checkin_options,
-                    format_func=lambda d: d.strftime("%d/%m/%Y"),
-                    help="Datas sugeridas com base nos outros hóspedes.",
-                )
-            else:
-                manual_checkin = st.date_input("Check-in")
+            manual_checkin = _choose_date_with_suggestions(
+                "Check-in",
+                checkin_options,
+                datetime.now().date(),
+                key_prefix="manual_checkin",
+            )
         with mf5:
-            if checkout_options:
-                manual_checkout = st.selectbox(
-                    "Check-out",
-                    options=checkout_options,
-                    format_func=lambda d: d.strftime("%d/%m/%Y"),
-                    help="Datas sugeridas com base nos outros hóspedes.",
-                )
-            else:
-                manual_checkout = st.date_input("Check-out")
+            manual_checkout = _choose_date_with_suggestions(
+                "Check-out",
+                checkout_options,
+                manual_checkin,
+                key_prefix="manual_checkout",
+            )
         with mf6:
             manual_unidade = st.text_input("Unidade (ex: Quarto 1)")
 
@@ -1610,31 +1656,33 @@ with tab_inserir:
         elif manual_checkout < manual_checkin:
             show_pink_alert("A data de check-out não pode ser anterior ao check-in.")
         else:
-            _manual_df = pd.DataFrame(
-                [
-                    {
-                        "Nome": _nome_txt,
-                        "Check-in": manual_checkin,
-                        "Check-out": manual_checkout,
-                        "Pessoas": int(manual_pessoas),
-                        "Unidade": _unidade_txt,
-                        "Alojamento": normalize_alojamento(manual_alojamento),
-                        "Origem": "Direta",
-                        "Hora PA": None if not manual_hora_pa or manual_hora_pa == "nenhuma" else manual_hora_pa,
-                        "PA pago": "Sim" if manual_pa_pago == "Sim" else None,
-                        "Notas": str(manual_notas).strip() if str(manual_notas).strip() else None,
-                    }
-                ]
-            )
+            _manual_reserva = {
+                "Nome": _nome_txt,
+                "Check-in": manual_checkin,
+                "Check-out": manual_checkout,
+                "Pessoas": int(manual_pessoas),
+                "Unidade": _unidade_txt,
+                "Alojamento": normalize_alojamento(manual_alojamento),
+                "Origem": "Direta",
+                "Hora PA": None if not manual_hora_pa or manual_hora_pa == "nenhuma" else manual_hora_pa,
+                "PA pago": "Sim" if manual_pa_pago == "Sim" else None,
+                "Notas": str(manual_notas).strip() if str(manual_notas).strip() else None,
+            }
             _base_df = st.session_state.get("reservas_df", pd.DataFrame()).copy()
-            _merged_df, _ = merge_new_reservas(_base_df, _manual_df)
-            _merged_df = sanitize_optional_columns(_merged_df)
-            st.session_state["reservas_df"] = _merged_df
-            st.session_state["reservas_editor_df"] = _merged_df
-            st.session_state["current_df"] = _merged_df
-            save_reservas(_merged_df)
-            st.success("Reserva direta adicionada com sucesso.")
-            st.rerun()
+            if _is_duplicate_reserva(_base_df, _manual_reserva):
+                show_pink_alert(
+                    "Já existe um hóspede com os mesmos dados (nome, datas, pessoas, unidade e alojamento)."
+                )
+            else:
+                _manual_df = pd.DataFrame([_manual_reserva])
+                _merged_df, _ = merge_new_reservas(_base_df, _manual_df)
+                _merged_df = sanitize_optional_columns(_merged_df)
+                st.session_state["reservas_df"] = _merged_df
+                st.session_state["reservas_editor_df"] = _merged_df
+                st.session_state["current_df"] = _merged_df
+                save_reservas(_merged_df)
+                st.success("Reserva direta adicionada com sucesso.")
+                st.rerun()
 
     st.divider()
     st.subheader("Quartos disponíveis hoje")
