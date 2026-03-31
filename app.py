@@ -725,18 +725,45 @@ def format_alojamento_badge(alojamento_value):
 
 
 def extract_room_tag(unidade_value):
+    import re
+
+    if pd.isna(unidade_value):
+        return ""
+
+    raw = str(unidade_value).strip()
+    if not raw:
+        return ""
+
+    lowered = raw.lower()
+    patterns = [
+        (r"\bquarto\b[^\d]{0,30}n?[ºo]?\s*(\d+)\b", "Q"),
+        (r"\bq\s*[-:#]?\s*(\d+)\b", "Q"),
+        (r"\bcama\b[^\d]{0,30}n?[ºo]?\s*(\d+)\b", "C"),
+        (r"\bc\s*[-:#]?\s*(\d+)\b", "C"),
+        (r"\bapartamento\b[^\d]{0,30}n?[ºo]?\s*([a-z0-9]+)\b", "A"),
+        (r"\b(?:apto|apt\.?)\s*[-:#]?\s*([a-z0-9]+)\b", "A"),
+    ]
+
+    for pattern, prefix in patterns:
+        match = re.search(pattern, lowered, flags=re.IGNORECASE)
+        if match:
+            return f"{prefix}{match.group(1).upper()}"
+
     unidades = parse_unidade_labels(unidade_value)
     if not unidades:
         return ""
 
     primeira = unidades[0]
     if primeira.lower().startswith("quarto "):
-        return f"Q{primeira.split(' ', 1)[1]}"
+        room_match = re.search(r"(\d+)", primeira)
+        return f"Q{room_match.group(1)}" if room_match else ""
     if primeira.lower().startswith("cama "):
-        return f"C{primeira.split(' ', 1)[1]}"
+        bed_match = re.search(r"(\d+)", primeira)
+        return f"C{bed_match.group(1)}" if bed_match else ""
     if primeira.lower().startswith("apartamento "):
-        return f"A{primeira.split(' ', 1)[1]}"
-    return primeira
+        apt_match = re.search(r"([a-z0-9]+)", primeira.split(" ", 1)[1], flags=re.IGNORECASE)
+        return f"A{apt_match.group(1).upper()}" if apt_match else ""
+    return ""
 
 
 def format_nome_com_quarto(nome_value, unidade_value):
@@ -808,8 +835,44 @@ def parse_unidade_labels(unidade_value):
 
 
 def format_quartos_text(unidade_value):
+    import re
+
     labels = parse_unidade_labels(unidade_value)
-    return ", ".join(labels) if labels else "Sem unidade definida"
+    if not labels:
+        return "Sem unidade definida"
+
+    short_labels = []
+    seen = set()
+
+    def _push(tag):
+        if tag and tag not in seen:
+            seen.add(tag)
+            short_labels.append(tag)
+
+    for label in labels:
+        txt = str(label).strip()
+        if not txt:
+            continue
+
+        matches = [
+            (r"\bquarto\b[^\d]{0,30}n?[ºo]?\s*(\d+)\b", "Q"),
+            (r"\bq\s*[-:#]?\s*(\d+)\b", "Q"),
+            (r"\bcama\b[^\d]{0,30}n?[ºo]?\s*(\d+)\b", "C"),
+            (r"\bc\s*[-:#]?\s*(\d+)\b", "C"),
+            (r"\bapartamento\b[^\d]{0,30}n?[ºo]?\s*([a-z0-9]+)\b", "A"),
+            (r"\b(?:apto|apt\.?)\s*[-:#]?\s*([a-z0-9]+)\b", "A"),
+        ]
+
+        normalized_tag = ""
+        for pattern, prefix in matches:
+            m = re.search(pattern, txt, flags=re.IGNORECASE)
+            if m:
+                normalized_tag = f"{prefix}{m.group(1).upper()}"
+                break
+
+        _push(normalized_tag)
+
+    return ", ".join(short_labels) if short_labels else "Sem unidade definida"
 
 
 def _build_quick_access_button_css(alojamentos):
