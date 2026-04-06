@@ -141,6 +141,7 @@ st.markdown(
 APP_DIR = Path(__file__).resolve().parent
 RESERVAS_FILE = APP_DIR / "reservas.json"
 QUARTOS_FILE = APP_DIR / "quartos_disponiveis.json"
+NOTAS_GERAIS_FILE = APP_DIR / "notas_gerais.json"
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 IMPORT_MATCH_COLS = ["Nome", "Check-in", "Alojamento"]
 IMPORT_UPDATE_COLS = ["Check-out", "Pessoas", "Unidade"]
@@ -391,6 +392,47 @@ def save_quartos(quartos_list):
     _atomic_write_json(QUARTOS_FILE, quartos_list)
 
 
+def load_notas_gerais():
+    parse_errors = []
+    for candidate in _json_candidates_for("notas_gerais.json"):
+        if not candidate.exists():
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if isinstance(data, dict):
+                notas = data.get("notas_gerais", "")
+            elif isinstance(data, str):
+                notas = data
+            else:
+                notas = ""
+
+            notas = "" if notas is None else str(notas)
+
+            if candidate != NOTAS_GERAIS_FILE:
+                save_notas_gerais(notas)
+
+            return notas
+        except Exception as e:
+            parse_errors.append(f"{candidate}: {e}")
+
+    if parse_errors:
+        show_pink_alert(
+            "Erro ao carregar notas gerais: " + " | ".join(parse_errors)
+        )
+
+    return ""
+
+
+def save_notas_gerais(texto):
+    payload = {
+        "notas_gerais": "" if texto is None else str(texto).strip(),
+        "last_saved_at": datetime.now().isoformat(),
+    }
+    _atomic_write_json(NOTAS_GERAIS_FILE, payload)
+
+
 def refresh_data_from_storage():
     refreshed_reservas = sanitize_optional_columns(load_reservas())
     if not refreshed_reservas.empty and "Origem" not in refreshed_reservas.columns:
@@ -408,6 +450,8 @@ def refresh_data_from_storage():
     st.session_state["reservas_editor_df"] = refreshed_reservas.copy()
     st.session_state["current_df"] = refreshed_reservas.copy()
     st.session_state["quartos_disponiveis"] = load_quartos()
+    st.session_state["notas_gerais_pa"] = load_notas_gerais()
+    st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
 
 
 def get_last_saved_text():
@@ -812,6 +856,19 @@ def parse_unidade_labels(unidade_value):
             continue
 
         found = False
+
+        # Captura formatos como "Quarto Duplo nº1" para não perder a unidade.
+        explicit_patterns = [
+            (r"\bquartos?\b.{0,40}?n?[ºo]?\s*(\d+)\b", "Quarto"),
+            (r"\bcamas?\b.{0,40}?n?[ºo]?\s*(\d+)\b", "Cama"),
+            (r"\bapartamentos?\b.{0,40}?n?[ºo]?\s*([a-z0-9]+)\b", "Apartamento"),
+            (r"\b(?:apto|apt\.?)\b.{0,40}?n?[ºo]?\s*([a-z0-9]+)\b", "Apartamento"),
+        ]
+        for pattern, prefix in explicit_patterns:
+            for m in re.finditer(pattern, p, flags=re.IGNORECASE):
+                _add(f"{prefix} {m.group(1).upper()}")
+                found = True
+
         patterns = [
             (r"apartamentos?\s*([a-z0-9]+(?:\s*(?:e|/|-)\s*[a-z0-9]+)*)", "Apartamento"),
             (r"(?:apto|apt\.?)\s*([a-z0-9]+(?:\s*(?:e|/|-)\s*[a-z0-9]+)*)", "Apartamento"),
@@ -855,11 +912,11 @@ def format_quartos_text(unidade_value):
             continue
 
         matches = [
-            (r"\bquarto\b[^\d]{0,30}n?[ºo]?\s*(\d+)\b", "Q"),
+            (r"\bquarto\b.{0,40}?n?[ºo]?\s*(\d+)\b", "Q"),
             (r"\bq\s*[-:#]?\s*(\d+)\b", "Q"),
-            (r"\bcama\b[^\d]{0,30}n?[ºo]?\s*(\d+)\b", "C"),
+            (r"\bcama\b.{0,40}?n?[ºo]?\s*(\d+)\b", "C"),
             (r"\bc\s*[-:#]?\s*(\d+)\b", "C"),
-            (r"\bapartamento\b[^\d]{0,30}n?[ºo]?\s*([a-z0-9]+)\b", "A"),
+            (r"\bapartamento\b.{0,40}?n?[ºo]?\s*([a-z0-9]+)\b", "A"),
             (r"\b(?:apto|apt\.?)\s*[-:#]?\s*([a-z0-9]+)\b", "A"),
         ]
 
@@ -872,7 +929,11 @@ def format_quartos_text(unidade_value):
 
         _push(normalized_tag)
 
-    return ", ".join(short_labels) if short_labels else "Sem unidade definida"
+    if short_labels:
+        return ", ".join(short_labels)
+
+    # Fallback: mostra as unidades originais quando não foi possível abreviar.
+    return ", ".join(labels) if labels else "Sem unidade definida"
 
 
 def _build_quick_access_button_css(alojamentos):
@@ -1153,6 +1214,10 @@ def _render_reservas_editor_impl(suggested_times):
         display_df["Alojamento"] = display_df["Alojamento"].apply(format_alojamento_badge)
     if "Nome" in display_df.columns:
         display_df["Nome"] = display_df["Nome"].fillna("")
+    if "Unidade" in display_df.columns:
+        display_df["Unidade"] = display_df["Unidade"].apply(
+            lambda v: "" if pd.isna(v) or not str(v).strip() else format_quartos_text(v)
+        )
     display_df["Check-in/Check-out"] = display_df.apply(
         lambda row: format_checkin_checkout(row.get("Check-in"), row.get("Check-out")),
         axis=1,
@@ -1234,7 +1299,7 @@ def _render_reservas_editor_impl(suggested_times):
         format_func=lambda i: (
             f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Nome'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Nome'].iloc[0]} | "
             f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Alojamento'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Alojamento'].iloc[0]} "
-            f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]) else select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]}"
+            f"{'' if pd.isna(select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0]) else format_quartos_text(select_df.loc[select_df['_idx'] == i, 'Unidade'].iloc[0])}"
         ),
         key="reserva_idx_select",
     )
@@ -1260,48 +1325,66 @@ def _render_reservas_editor_impl(suggested_times):
     pessoas_default_num = pd.to_numeric(editor_df.loc[reserva_idx, "Pessoas"], errors="coerce")
     pessoas_default = int(pessoas_default_num) if pd.notna(pessoas_default_num) and int(pessoas_default_num) > 0 else 1
 
+    # Recarrega os campos sempre que muda a reserva selecionada para evitar estado "preso".
+    if st.session_state.get("reserva_form_loaded_idx") != reserva_idx:
+        st.session_state["reserva_form_loaded_idx"] = reserva_idx
+        st.session_state["reserva_form_hora"] = hora_default
+        st.session_state["reserva_form_pago"] = pago_default
+        st.session_state["reserva_form_pessoas"] = pessoas_default
+        st.session_state["reserva_form_notas"] = notas_default
+        st.session_state["reserva_form_unidade"] = unidade_default
+
     c1, c2, c3, c4, c5 = st.columns([1, 1, 1.2, 1.5, 1.4])
     with c1:
-        nova_hora = st.selectbox(
+        st.selectbox(
             "Hora PA",
             options=hora_options,
-            index=hora_options.index(hora_default) if hora_default is not None else None,
+            index=hora_options.index(st.session_state.get("reserva_form_hora"))
+            if st.session_state.get("reserva_form_hora") in hora_options
+            else None,
             placeholder="nenhuma",
-            key=f"hora_pa_update_{reserva_idx}",
+            key="reserva_form_hora",
         )
     with c2:
-        novo_pago = st.selectbox(
+        st.selectbox(
             "PA pago",
             options=pago_options,
-            index=pago_options.index(pago_default) if pago_default is not None else None,
+            index=pago_options.index(st.session_state.get("reserva_form_pago"))
+            if st.session_state.get("reserva_form_pago") in pago_options
+            else None,
             placeholder="Não",
-            key=f"pa_pago_update_{reserva_idx}",
+            key="reserva_form_pago",
         )
     with c3:
-        novas_pessoas = st.number_input(
+        st.number_input(
             "Pessoas",
             min_value=1,
             step=1,
-            value=pessoas_default,
-            key=f"pessoas_update_{reserva_idx}",
+            value=int(st.session_state.get("reserva_form_pessoas", pessoas_default)),
+            key="reserva_form_pessoas",
         )
     with c4:
-        novas_notas = st.text_input(
+        st.text_input(
             "Notas",
-            value=notas_default,
-            key=f"notas_update_{reserva_idx}",
+            value=st.session_state.get("reserva_form_notas", notas_default),
+            key="reserva_form_notas",
             placeholder="Escreve uma nota...",
         )
     with c5:
-        nova_unidade = st.text_input(
+        st.text_input(
             "Quarto/Unidade",
-            value=unidade_default,
-            key=f"unidade_update_{reserva_idx}",
+            value=st.session_state.get("reserva_form_unidade", unidade_default),
+            key="reserva_form_unidade",
             placeholder="Ex: Quarto 2",
         )
 
     if st.button("Aplicar alterações à reserva", key="apply_reserva_update"):
         df_before_update = editor_df.copy()
+        nova_hora = st.session_state.get("reserva_form_hora")
+        novo_pago = st.session_state.get("reserva_form_pago")
+        novas_pessoas = st.session_state.get("reserva_form_pessoas", pessoas_default)
+        novas_notas = st.session_state.get("reserva_form_notas", "")
+        nova_unidade = st.session_state.get("reserva_form_unidade", "")
         editor_df.loc[reserva_idx, "Hora PA"] = None if not nova_hora or nova_hora == "nenhuma" else nova_hora
         editor_df.loc[reserva_idx, "PA pago"] = None if not novo_pago or novo_pago == "Não" else novo_pago
         editor_df.loc[reserva_idx, "Pessoas"] = int(novas_pessoas)
@@ -1497,6 +1580,10 @@ if "show_overcrowding_ack" not in st.session_state:
     st.session_state["show_overcrowding_ack"] = False
 if "quartos_disponiveis" not in st.session_state:
     st.session_state["quartos_disponiveis"] = load_quartos()
+if "notas_gerais_pa" not in st.session_state:
+    st.session_state["notas_gerais_pa"] = load_notas_gerais()
+if "notas_gerais_pa_editor" not in st.session_state:
+    st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
 
 header_c1, header_c2 = st.columns([4, 1.2])
 with header_c1:
@@ -1518,8 +1605,8 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.session_state["pending_overcrowding_messages"] = []
         st.rerun()
 
-tab_acesso_rapido, tab_reservas, tab_pa, tab_inserir, tab_importar, tab_guardar = st.tabs(
-    ["Acesso rápido", "Reservas", "Pequenos almoços", "Inserir", "Importar", "Limpar"]
+tab_acesso_rapido, tab_reservas, tab_pa, tab_notas, tab_inserir, tab_importar, tab_guardar = st.tabs(
+    ["Acesso rápido", "Reservas", "Pequenos almoços", "Notas", "Inserir", "Importar", "Limpar"]
 )
 
 uploaded_files = []
@@ -1944,6 +2031,21 @@ if not df_final.empty:
     with tab_reservas:
         render_reservas_editor(suggested_times)
 
+    with tab_notas:
+        st.subheader("📝 Notas gerais")
+        st.caption("Estas notas entram no fim do texto exportado de pequenos-almoços e não substituem as notas de cada reserva.")
+        st.text_area(
+            "Notas para exportação",
+            key="notas_gerais_pa_editor",
+            placeholder="Ex.: Avisar cozinha sobre alergias gerais do dia...",
+            height=180,
+        )
+        if st.button("Guardar notas", key="save_notas_gerais_btn", type="primary"):
+            notas_limpas = str(st.session_state.get("notas_gerais_pa_editor", "")).strip()
+            st.session_state["notas_gerais_pa"] = notas_limpas
+            save_notas_gerais(notas_limpas)
+            st.success("Notas gerais guardadas.")
+
     edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
     st.session_state["current_df"] = edited_df.copy()
 
@@ -2058,18 +2160,22 @@ if not df_final.empty:
                         is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
                         nota = r.get("Notas", None)
                         nota_texto = str(nota).strip() if nota_valida(nota) else ""
-                        if is_pago and nota_texto:
-                            sufixo = f" (pago; {nota_texto})"
-                        elif is_pago:
-                            sufixo = " (pago)"
-                        elif nota_texto:
-                            sufixo = f" ({nota_texto})"
-                        else:
-                            sufixo = ""
+                        tags = []
+                        if is_pago:
+                            tags.append("pago")
+                        if nota_texto:
+                            tags.append(nota_texto)
+                        sufixo = f" (*{'; '.join(tags)}*)" if tags else ""
                         linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
                     linhas.append("")
 
                 linhas.append(f"Total de pessoas: {total_pessoas_col(df_pa)}")
+
+                notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
+                if notas_gerais:
+                    linhas.append("")
+                    linhas.append("Notas:")
+                    linhas.append(notas_gerais)
 
                 return "\n".join(linhas)
 
@@ -2090,18 +2196,22 @@ if not df_final.empty:
                         is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
                         nota = r.get("Notas", None)
                         nota_texto = str(nota).strip() if nota_valida(nota) else ""
-                        if is_pago and nota_texto:
-                            sufixo = f" (pago; {nota_texto})"
-                        elif is_pago:
-                            sufixo = " (pago)"
-                        elif nota_texto:
-                            sufixo = f" ({nota_texto})"
-                        else:
-                            sufixo = ""
+                        tags = []
+                        if is_pago:
+                            tags.append("pago")
+                        if nota_texto:
+                            tags.append(nota_texto)
+                        sufixo = f" (*{'; '.join(tags)}*)" if tags else ""
                         linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
                     linhas.append("")
 
                 linhas.append(f"**Total de pessoas:** {total_pessoas_col(df_pa)}")
+
+                notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
+                if notas_gerais:
+                    linhas.append("")
+                    linhas.append("**Notas:**")
+                    linhas.append(notas_gerais)
 
                 return "\n\n".join(linhas)
 
@@ -2192,6 +2302,8 @@ else:
     with tab_reservas:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
     with tab_pa:
+        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+    with tab_notas:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
     with tab_guardar:
         st.info("Sem dados para guardar/limpar neste momento.")
