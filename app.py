@@ -1512,13 +1512,18 @@ def _render_reservas_editor_impl(suggested_times):
             elif edit_checkout < edit_checkin:
                 show_pink_alert("A data de check-out não pode ser anterior ao check-in.")
             else:
+                checkin_store = pd.to_datetime(edit_checkin, errors="coerce")
+                checkout_store = pd.to_datetime(edit_checkout, errors="coerce")
+                checkin_store = checkin_store.strftime("%Y-%m-%d") if pd.notna(checkin_store) else None
+                checkout_store = checkout_store.strftime("%Y-%m-%d") if pd.notna(checkout_store) else None
+
                 _edit_candidate = {
                     "Nome": nome_edit_txt,
                     "Alojamento": edit_alojamento,
                     "Unidade": str(edit_unidade).strip() or None,
                     "Pessoas": int(edit_pessoas),
-                    "Check-in": edit_checkin,
-                    "Check-out": edit_checkout,
+                    "Check-in": checkin_store,
+                    "Check-out": checkout_store,
                 }
                 if _is_duplicate_reserva(editor_df, _edit_candidate, ignore_index=reserva_idx):
                     show_pink_alert(
@@ -1528,8 +1533,8 @@ def _render_reservas_editor_impl(suggested_times):
                     editor_df.loc[reserva_idx, "Nome"] = nome_edit_txt
                     editor_df.loc[reserva_idx, "Alojamento"] = edit_alojamento
                     editor_df.loc[reserva_idx, "Pessoas"] = int(edit_pessoas)
-                    editor_df.loc[reserva_idx, "Check-in"] = edit_checkin
-                    editor_df.loc[reserva_idx, "Check-out"] = edit_checkout
+                    editor_df.loc[reserva_idx, "Check-in"] = checkin_store
+                    editor_df.loc[reserva_idx, "Check-out"] = checkout_store
                     editor_df.loc[reserva_idx, "Unidade"] = str(edit_unidade).strip() or None
                     editor_df.loc[reserva_idx, "Hora PA"] = None if edit_hora_pa == "nenhuma" else edit_hora_pa
                     editor_df.loc[reserva_idx, "PA pago"] = "Sim" if edit_pa_pago == "Sim" else None
