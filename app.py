@@ -922,11 +922,14 @@ def extract_room_tag(unidade_value):
 
 def format_nome_com_quarto(nome_value, unidade_value):
     nome = "" if pd.isna(nome_value) else str(nome_value).strip()
-    room_tag = extract_room_tag(unidade_value)
-    if nome and room_tag:
-        return f"{nome} ({room_tag})"
-    if room_tag:
-        return room_tag
+    # Mostra todos os quartos/unidades associados
+    unidades = parse_unidade_labels(unidade_value)
+    if nome and unidades:
+        return f"{nome} (" + ", ".join([
+            format_quartos_text(u) for u in unidades
+        ]) + ")"
+    if unidades:
+        return ", ".join([format_quartos_text(u) for u in unidades])
     return nome
 
 
