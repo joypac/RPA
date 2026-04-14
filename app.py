@@ -1726,6 +1726,31 @@ with tab_saidas:
     st.header("Checklist de Saídas (Limpezas)")
     st.info("Visualize e confirme as saídas previstas para amanhã. Marque/desmarque manualmente conforme necessário.")
 
+    with st.expander("🔍 Diagnóstico (temporário)", expanded=False):
+        _df_diag = st.session_state.get("reservas_editor_df") or st.session_state.get("reservas_df")
+        if _df_diag is None or _df_diag.empty:
+            st.write("Sem dados carregados.")
+        else:
+            _hoje_diag = date.today()
+            _amanha_diag = _hoje_diag + timedelta(days=1)
+            st.write(f"Hoje: {_hoje_diag} | Amanhã: {_amanha_diag}")
+            _saidas_diag = []
+            for _, r in _df_diag.iterrows():
+                try:
+                    ci = pd.to_datetime(r.get("Check-in")).date() if pd.notna(r.get("Check-in")) else None
+                    co = pd.to_datetime(r.get("Check-out")).date() if pd.notna(r.get("Check-out")) else None
+                    _saidas_diag.append({
+                        "Nome": r.get("Nome", ""),
+                        "Alojamento": r.get("Alojamento", ""),
+                        "Unidade": r.get("Unidade", ""),
+                        "Check-in": str(ci),
+                        "Check-out": str(co),
+                        "Sai amanhã?": "✅" if co == _amanha_diag else "❌",
+                    })
+                except Exception:
+                    pass
+            st.dataframe(_saidas_diag, hide_index=True)
+
     # --- Estrutura fixa dos alojamentos e quartos ---
     CHECKLIST_STRUCTURE = [
         ("ABH", [
