@@ -1724,7 +1724,7 @@ if (
 # --- Checklist de Saídas ---
 with tab_saidas:
     st.header("Checklist de Saídas (Limpezas)")
-    st.info("Visualize e confirme as saídas previstas para hoje. Marque/desmarque manualmente conforme necessário.")
+    st.info("Visualize e confirme as saídas previstas para amanhã. Marque/desmarque manualmente conforme necessário.")
 
     # --- Estrutura fixa dos alojamentos e quartos ---
     CHECKLIST_STRUCTURE = [
@@ -1760,6 +1760,7 @@ with tab_saidas:
     # --- Carregar dados de reservas para sugerir saídas ---
     reservas_df = st.session_state.get("reservas_df")
     hoje = date.today()
+    amanha = hoje + timedelta(days=1)
     ontem = hoje - timedelta(days=1)
 
     # Função para identificar se há saída prevista para o quarto
@@ -1842,7 +1843,7 @@ with tab_saidas:
             try:
                 checkin = pd.to_datetime(row["Check-in"]).date() if pd.notna(row.get("Check-in")) else None
                 checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
-                if checkout != hoje or checkin is None:
+                if checkout != amanha or checkin is None:
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
@@ -1898,8 +1899,8 @@ with tab_saidas:
                 checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
                 if checkin is None or checkout is None:
                     continue
-                # Hóspede está cá hoje mas não sai hoje
-                if not (checkin <= hoje < checkout):
+                # Hóspede está cá amanhã mas não sai amanhã (fica = não precisa limpeza)
+                if not (checkin <= amanha < checkout):
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
