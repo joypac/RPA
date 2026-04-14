@@ -494,7 +494,10 @@ def load_saidas_checklist(df=None):
 
 def save_saidas_checklist(checklist: dict, df=None):
     payload = {k: bool(v) for k, v in checklist.items() if not k.startswith("_")}
-    payload["_date"] = data_referencia_checklist(df)
+    ref_date = data_referencia_checklist(df)
+    if hasattr(ref_date, 'isoformat'):
+        ref_date = ref_date.isoformat()
+    payload["_date"] = ref_date
     _atomic_write_json(SAIDAS_FILE, payload)
 
 
