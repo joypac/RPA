@@ -1894,7 +1894,8 @@ with tab_saidas:
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
-                if aloj_checklist not in aloj_row and aloj_row not in aloj_checklist:
+                # Exige igualdade exata para evitar confusão DUNAS vs DUNAS2
+                if aloj_checklist != aloj_row:
                     continue
 
                 unidade_raw = norm(str(row.get("Unidade", "")))
