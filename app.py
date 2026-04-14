@@ -1827,9 +1827,15 @@ with tab_saidas:
                 if m:
                     num = m.group(1)
                 else:
-                    m = re.fullmatch(r'[a-z]?(\d+)', txt.strip())
+                    m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
                     if m:
-                        num = m.group(1)
+                        prefix = m.group(1).lower()
+                        num = m.group(2)
+                        # Prefixo Q = quarto, C = cama (abreviaturas do unidade_curta)
+                        if prefix == 'q':
+                            return ('quarto', num)
+                        if prefix == 'c':
+                            return ('cama', num)
 
             if is_cama_u:
                 return ('cama', num)
@@ -1923,17 +1929,24 @@ with tab_saidas:
                     if m: return m.group(1)
                     m = re.search(r'\b(?:cama|bed|bunk|room|quarto|suite)\s+(\d+)\b', txt, re.IGNORECASE)
                     if m: return m.group(1)
-                    m = re.fullmatch(r'[a-z]?(\d+)', txt.strip())
-                    if m: return m.group(1)
+                    m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
+                    if m:
+                        prefix = m.group(1).lower()
+                        num = m.group(2)
+                        # Q = quarto, C = cama — devolve só o número
+                        return num
                     return None
 
                 # Suporta unidades múltiplas separadas por vírgula
                 for unidade in [p.strip() for p in unidade_raw.split(",") if p.strip()]:
                     num_u = _num(unidade)
-                    is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', unidade, re.IGNORECASE))
+                    # Reconhece prefixos Q/C além de palavras completas
+                    _pref = re.fullmatch(r'([a-z]?)(\d+)', unidade.strip())
+                    _pref_letter = _pref.group(1).lower() if _pref else ''
+                    is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', unidade, re.IGNORECASE)) or _pref_letter == 'c'
                     is_quarto_u = bool(re.search(
                         r'\b(?:quarto|room|suite|double|twin|single|triple|duplo|individual|triplo|quadruplo)\b',
-                        unidade, re.IGNORECASE))
+                        unidade, re.IGNORECASE)) or _pref_letter == 'q'
 
                     if is_cama and item_num:
                         if (is_cama_u or not is_quarto_u) and num_u == item_num:
