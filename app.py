@@ -1850,26 +1850,27 @@ with tab_saidas:
                 if aloj_checklist not in aloj_row and aloj_row not in aloj_checklist:
                     continue
 
-                unidade = norm(str(row.get("Unidade", "")))
+                unidade_raw = norm(str(row.get("Unidade", "")))
 
                 # Unidade vazia ou igual ao nome do alojamento = propriedade inteira
-                if not unidade or unidade == aloj_checklist:
+                if not unidade_raw or unidade_raw == aloj_checklist:
                     return True
 
-                tipo_u, num_u = tipo_e_num_unidade(unidade)
+                # Suporta unidades múltiplas separadas por vírgula (ex: "Q1, Q4, Q2")
+                partes_unidade = [p.strip() for p in unidade_raw.split(",") if p.strip()]
+                for unidade in partes_unidade:
+                    tipo_u, num_u = tipo_e_num_unidade(unidade)
 
-                # Propriedade inteira: marca todos os quartos e camas
-                if tipo_u == 'casa':
-                    return True
+                    # Propriedade inteira: marca todos os quartos e camas
+                    if tipo_u == 'casa':
+                        return True
 
-                if is_cama and item_num:
-                    # Item do checklist é uma cama: só faz match se a unidade for cama (ou ambígua)
-                    if tipo_u in ('cama', 'ambiguo') and num_u == item_num:
-                        return True
-                elif item_num:
-                    # Item do checklist é um quarto: só faz match se a unidade for quarto (ou ambígua)
-                    if tipo_u in ('quarto', 'ambiguo') and num_u == item_num:
-                        return True
+                    if is_cama and item_num:
+                        if tipo_u in ('cama', 'ambiguo') and num_u == item_num:
+                            return True
+                    elif item_num:
+                        if tipo_u in ('quarto', 'ambiguo') and num_u == item_num:
+                            return True
             except Exception:
                 continue
         return False
@@ -1907,17 +1908,16 @@ with tab_saidas:
                 if aloj_checklist not in aloj_row and aloj_row not in aloj_checklist:
                     continue
 
-                unidade = norm(str(row.get("Unidade", "")))
+                unidade_raw = norm(str(row.get("Unidade", "")))
 
                 # Propriedade inteira
                 palavras_casa = ["two bedroom", "house", "entire", "completo", "inteiro",
                                  "casa inteira", "apartamento inteiro", "whole"]
-                if any(p in unidade for p in palavras_casa):
+                if any(p in unidade_raw for p in palavras_casa):
                     return True
-                if not unidade or unidade == aloj_checklist:
+                if not unidade_raw or unidade_raw == aloj_checklist:
                     return True
 
-                # Extrai número da unidade da reserva
                 def _num(txt):
                     m = re.search(r'\bn[ro]?[º°]?\.?\s*(\d+)\b', txt, re.IGNORECASE)
                     if m: return m.group(1)
@@ -1927,18 +1927,20 @@ with tab_saidas:
                     if m: return m.group(1)
                     return None
 
-                num_u = _num(unidade)
-                is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', unidade, re.IGNORECASE))
-                is_quarto_u = bool(re.search(
-                    r'\b(?:quarto|room|suite|double|twin|single|triple|duplo|individual|triplo|quadruplo)\b',
-                    unidade, re.IGNORECASE))
+                # Suporta unidades múltiplas separadas por vírgula
+                for unidade in [p.strip() for p in unidade_raw.split(",") if p.strip()]:
+                    num_u = _num(unidade)
+                    is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', unidade, re.IGNORECASE))
+                    is_quarto_u = bool(re.search(
+                        r'\b(?:quarto|room|suite|double|twin|single|triple|duplo|individual|triplo|quadruplo)\b',
+                        unidade, re.IGNORECASE))
 
-                if is_cama and item_num:
-                    if (is_cama_u or not is_quarto_u) and num_u == item_num:
-                        return True
-                elif item_num:
-                    if (is_quarto_u or not is_cama_u) and num_u == item_num:
-                        return True
+                    if is_cama and item_num:
+                        if (is_cama_u or not is_quarto_u) and num_u == item_num:
+                            return True
+                    elif item_num:
+                        if (is_quarto_u or not is_cama_u) and num_u == item_num:
+                            return True
             except Exception:
                 continue
         return False
