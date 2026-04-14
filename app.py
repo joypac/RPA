@@ -1735,11 +1735,7 @@ tab_acesso_rapido, tab_reservas, tab_pa, tab_saidas, tab_notas, tab_inserir, tab
     ["Acesso rápido", "Reservas", "Pequenos almoços", "Saídas", "Notas", "Inserir", "Importar"]
 )
 
-if (
-    "reservas_df" not in st.session_state
-    or st.session_state["reservas_df"] is None
-    or (isinstance(st.session_state["reservas_df"], pd.DataFrame) and st.session_state["reservas_df"].empty)
-):
+if "reservas_df" not in st.session_state or not isinstance(st.session_state["reservas_df"], pd.DataFrame) or st.session_state["reservas_df"].empty:
     st.warning("⚠️ Ainda não existem dados inseridos ou importados. Usa o separador 'Importar' ou 'Inserir' para começar.")
 
 # --- Checklist de Saídas ---
@@ -1779,8 +1775,21 @@ with tab_saidas:
     ]
 
     # --- Carregar dados de reservas para sugerir saídas ---
+
     reservas_df = st.session_state.get("reservas_df")
-    hoje = date.today()
+    # Data de referência automática: check-in mais frequente, ou hoje se não houver dados
+    def data_referencia_checklist(df=None):
+        if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+            return date.today()
+        try:
+            checkins = pd.to_datetime(df["Check-in"], errors="coerce").dropna()
+            if checkins.empty:
+                return date.today()
+            return checkins.dt.date.mode()[0]
+        except Exception:
+            return date.today()
+
+    hoje = data_referencia_checklist(reservas_df)
     amanha = hoje + timedelta(days=1)
     ontem = hoje - timedelta(days=1)
 
