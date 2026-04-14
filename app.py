@@ -72,6 +72,7 @@ st.markdown(
         f"""
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap');
+            @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
             :root {{
                 --primary-color: {THEME['primary']};
@@ -147,6 +148,7 @@ st.markdown(
                     visibility: hidden !important;
                 }}
             }}
+
         </style>
         """,
         unsafe_allow_html=True,
@@ -156,6 +158,7 @@ APP_DIR = Path(__file__).resolve().parent
 RESERVAS_FILE = APP_DIR / "reservas.json"
 QUARTOS_FILE = APP_DIR / "quartos_disponiveis.json"
 NOTAS_GERAIS_FILE = APP_DIR / "notas_gerais.json"
+SAIDAS_FILE = APP_DIR / "saidas_checklist.json"
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 IMPORT_MATCH_COLS = ["Nome", "Check-in", "Alojamento"]
 IMPORT_UPDATE_COLS = ["Check-out", "Pessoas", "Unidade"]
@@ -447,6 +450,23 @@ def save_notas_gerais(texto):
     _atomic_write_json(NOTAS_GERAIS_FILE, payload)
 
 
+def load_saidas_checklist():
+    if not SAIDAS_FILE.exists():
+        return {}
+    try:
+        with SAIDAS_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return {k: bool(v) for k, v in data.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def save_saidas_checklist(checklist: dict):
+    _atomic_write_json(SAIDAS_FILE, {k: bool(v) for k, v in checklist.items()})
+
+
 def refresh_data_from_storage():
     refreshed_reservas = sanitize_optional_columns(load_reservas())
     if not refreshed_reservas.empty and "Origem" not in refreshed_reservas.columns:
@@ -462,10 +482,10 @@ def refresh_data_from_storage():
     refreshed_reservas = normalize_pessoas_column(refreshed_reservas)
     st.session_state["reservas_df"] = refreshed_reservas.copy()
     st.session_state["reservas_editor_df"] = refreshed_reservas.copy()
-    st.session_state["current_df"] = refreshed_reservas.copy()
     st.session_state["quartos_disponiveis"] = load_quartos()
     st.session_state["notas_gerais_pa"] = load_notas_gerais()
     st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
+    st.session_state["saidas_checklist"] = load_saidas_checklist()
 
 
 def get_last_saved_text():
@@ -646,7 +666,7 @@ def build_overcrowding_messages(df, suggested_times, threshold=16):
         if row["Pessoas"] >= threshold:
             pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
             pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
-            messages.append(f"⚠️ {row['Hora']} → {pessoas_total} pessoas")
+            messages.append(f"⚠ {row['Hora']} → {pessoas_total} pessoas")
     return messages
 
 
@@ -749,6 +769,48 @@ def _is_duplicate_reserva(df_existing, reserva_row, ignore_index=None):
         if _build_reserva_key(existing_row) == target_key:
             return True
     return False
+
+
+def detect_conflicts(df):
+    """Detecta reservas sobrepostas no mesmo alojamento+unidade.
+    Retorna lista de strings descritivas dos conflitos encontrados.
+    Ignora unidades vazias (reservas de propriedade inteira são tratadas separadamente).
+    """
+    if df is None or df.empty:
+        return []
+
+    conflicts = []
+
+    def _parse_date(v):
+        try:
+            return pd.to_datetime(v).date()
+        except Exception:
+            return None
+
+    rows = []
+    for idx, row in df.iterrows():
+        aloj = str(row.get("Alojamento", "") or "").strip()
+        unidade = str(row.get("Unidade", "") or "").strip()
+        checkin = _parse_date(row.get("Check-in"))
+        checkout = _parse_date(row.get("Check-out"))
+        nome = str(row.get("Nome", "") or "").strip()
+        if aloj and unidade and checkin and checkout and checkin < checkout:
+            rows.append((idx, aloj, unidade, checkin, checkout, nome))
+
+    seen = set()
+    for i, (idx_a, aloj_a, uni_a, ci_a, co_a, nome_a) in enumerate(rows):
+        for idx_b, aloj_b, uni_b, ci_b, co_b, nome_b in rows[i + 1:]:
+            if aloj_a != aloj_b or uni_a.lower() != uni_b.lower():
+                continue
+            # Sobreposição: [ci_a, co_a[ ∩ [ci_b, co_b[ ≠ ∅
+            if ci_a < co_b and ci_b < co_a:
+                key = tuple(sorted([idx_a, idx_b]))
+                if key not in seen:
+                    seen.add(key)
+                    conflicts.append(
+                        f"⚠ Conflito: **{aloj_a} — {uni_a}** reservado por **{nome_a}** ({ci_a.strftime('%d/%m')}–{co_a.strftime('%d/%m')}) e **{nome_b}** ({ci_b.strftime('%d/%m')}–{co_b.strftime('%d/%m')})"
+                    )
+    return conflicts
 
 
 ALOJAMENTO_BADGES = {
@@ -1091,7 +1153,6 @@ def render_quick_access_tab(df, suggested_times):
                                 _merged = sanitize_optional_columns(_merged)
                                 st.session_state["reservas_df"] = _merged
                                 st.session_state["reservas_editor_df"] = _merged
-                                st.session_state["current_df"] = _merged
                                 save_reservas(_merged)
                                 st.session_state["quartos_disponiveis"].pop(_qi)
                                 save_quartos(st.session_state["quartos_disponiveis"])
@@ -1107,7 +1168,7 @@ def render_quick_access_tab(df, suggested_times):
     if selected_idx is None:
         ctop1, ctop2 = st.columns([1.5, 4])
         with ctop1:
-            if st.button("⬅️ Voltar aos alojamentos", key="quick_back_to_aloj"):
+            if st.button("← Voltar aos alojamentos", key="quick_back_to_aloj"):
                 st.session_state["quick_selected_aloj"] = None
                 st.session_state["quick_selected_idx"] = None
                 st.rerun()
@@ -1146,7 +1207,7 @@ def render_quick_access_tab(df, suggested_times):
     # Passo 3: apenas ficha da pessoa selecionada
     ctop1, ctop2 = st.columns([1.5, 4])
     with ctop1:
-        if st.button("⬅️ Voltar aos nomes", key="quick_back_to_names"):
+        if st.button("← Voltar aos nomes", key="quick_back_to_names"):
             st.session_state["quick_selected_idx"] = None
             st.rerun()
     with ctop2:
@@ -1208,7 +1269,6 @@ def render_quick_access_tab(df, suggested_times):
         updated_df = sanitize_optional_columns(updated_df)
 
         st.session_state["reservas_editor_df"] = updated_df.copy()
-        st.session_state["current_df"] = updated_df.copy()
         st.session_state["reservas_df"] = updated_df.copy()
         save_reservas(updated_df)
         st.success("Alterações guardadas com sucesso.")
@@ -1222,6 +1282,14 @@ def _render_reservas_editor_impl(suggested_times):
     if editor_df.empty:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
         return
+
+    conflicts = detect_conflicts(editor_df)
+    if conflicts:
+        with st.expander(f"⚠ {len(conflicts)} conflito(s) de reservas detectado(s)", expanded=True):
+            for c in conflicts:
+                st.markdown(c)
+
+    vista_compacta = st.toggle("Vista compacta", value=False, key="reservas_vista_compacta")
 
     display_df = editor_df.copy()
     if "Alojamento" in display_df.columns:
@@ -1237,20 +1305,34 @@ def _render_reservas_editor_impl(suggested_times):
         axis=1,
     )
     display_df = display_df.drop(columns=[c for c in ["Check-in", "Check-out"] if c in display_df.columns])
-    ordered_display_cols = [
-        "Alojamento",
-        "Nome",
-        "Unidade",
-        "Pessoas",
-        "Check-in/Check-out",
-        "Hora PA",
-        "PA pago",
-        "Notas",
-    ]
+    if vista_compacta:
+        ordered_display_cols = ["Alojamento", "Nome", "Unidade", "Pessoas", "Check-in/Check-out"]
+    else:
+        ordered_display_cols = [
+            "Alojamento",
+            "Nome",
+            "Unidade",
+            "Pessoas",
+            "Check-in/Check-out",
+            "Hora PA",
+            "PA pago",
+            "Notas",
+        ]
     display_df = display_df[[c for c in ordered_display_cols if c in display_df.columns]]
 
     _fill_cols = [c for c in display_df.columns if c not in ("Hora PA", "PA pago", "Notas")]
     display_df[_fill_cols] = display_df[_fill_cols].fillna("")
+    # Normaliza unidades "casa inteira" para leitura humana na vista
+    _CASA_INTEIRA_RE = re.compile(
+        r'\b(two[\s-]bedroom|three[\s-]bedroom|four[\s-]bedroom'
+        r'|house|entire|whole|completo|inteiro'
+        r'|casa inteira|apartamento inteiro)\b',
+        re.IGNORECASE,
+    )
+    if "Unidade" in display_df.columns:
+        display_df["Unidade"] = display_df["Unidade"].apply(
+            lambda v: "Apartamento inteiro" if isinstance(v, str) and _CASA_INTEIRA_RE.search(v) else v
+        )
     # Sem scroll interno: usa apenas o scroll da página.
     editor_height = max(240, 42 + (len(display_df) + 1) * 35)
     edited_from_table = st.data_editor(
@@ -1299,7 +1381,6 @@ def _render_reservas_editor_impl(suggested_times):
             st.session_state["show_overcrowding_ack"] = True
 
         st.session_state["reservas_editor_df"] = updated_df.copy()
-        st.session_state["current_df"] = updated_df.copy()
         st.session_state["reservas_df"] = updated_df.copy()
         save_reservas(updated_df)
         editor_df = updated_df
@@ -1414,7 +1495,6 @@ def _render_reservas_editor_impl(suggested_times):
             st.session_state["show_overcrowding_ack"] = True
 
         st.session_state["reservas_editor_df"] = editor_df.copy()
-        st.session_state["current_df"] = editor_df.copy()
         st.session_state["reservas_df"] = editor_df.copy()
         save_reservas(editor_df)
         st.success("Reserva atualizada.")
@@ -1436,7 +1516,6 @@ def _render_reservas_editor_impl(suggested_times):
                 updated_df = editor_df.drop(index=reserva_idx).reset_index(drop=True)
                 updated_df = sanitize_optional_columns(updated_df)
                 st.session_state["reservas_editor_df"] = updated_df.copy()
-                st.session_state["current_df"] = updated_df.copy()
                 st.session_state["reservas_df"] = updated_df.copy()
                 save_reservas(updated_df)
                 st.session_state["delete_reserva_confirm_idx"] = None
@@ -1555,14 +1634,13 @@ def _render_reservas_editor_impl(suggested_times):
                     editor_df.loc[reserva_idx, "Notas"] = str(edit_notas).strip() or None
                     editor_df = sanitize_optional_columns(editor_df)
                     st.session_state["reservas_editor_df"] = editor_df.copy()
-                    st.session_state["current_df"] = editor_df.copy()
                     st.session_state["reservas_df"] = editor_df.copy()
                     save_reservas(editor_df)
                     st.success("Reserva editada com sucesso.")
                     st.rerun()
 
     st.divider()
-    st.subheader("🛏️ Ocupação desta noite")
+    st.subheader(" Ocupação desta noite")
     st.metric("Total de hóspedes", total_hospedes_esta_noite(editor_df))
 
     st.divider()
@@ -1575,7 +1653,7 @@ def _render_reservas_editor_impl(suggested_times):
     display_df_export.to_excel(excel_buffer, index=False, engine="openpyxl", sheet_name="Reservas")
     excel_buffer.seek(0)
     st.download_button(
-        label="📥 Exportar para Excel",
+        label=" Exportar para Excel",
         data=excel_buffer.getvalue(),
         file_name="reservas.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1589,8 +1667,6 @@ render_reservas_editor = (
 )
 
 
-if "current_df" not in st.session_state:
-    st.session_state["current_df"] = pd.DataFrame()
 if "reservas_df" not in st.session_state:
     st.session_state["reservas_df"] = load_reservas()
 if "pending_overcrowding_messages" not in st.session_state:
@@ -1608,7 +1684,7 @@ header_c1, header_c2 = st.columns([4, 1.2])
 with header_c1:
     st.markdown("### Gestão de Reservas + Pequenos-Almoços")
 with header_c2:
-    if st.button("🔄 Atualizar", use_container_width=True, help="Recarrega dados guardados do ficheiro/Supabase"):
+    if st.button(" Atualizar", use_container_width=True, help="Recarrega dados guardados do ficheiro/Supabase"):
         refresh_data_from_storage()
         st.success("Dados atualizados.")
         st.rerun()
@@ -1624,8 +1700,8 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.session_state["pending_overcrowding_messages"] = []
         st.rerun()
 
-tab_acesso_rapido, tab_reservas, tab_pa, tab_saidas, tab_notas, tab_inserir, tab_importar, tab_guardar = st.tabs(
-    ["Acesso rápido", "Reservas", "Pequenos almoços", "Saídas", "Notas", "Inserir", "Importar", "Limpar"]
+tab_acesso_rapido, tab_reservas, tab_pa, tab_saidas, tab_notas, tab_inserir, tab_importar = st.tabs(
+    ["Acesso rápido", "Reservas", "Pequenos almoços", "Saídas", "Notas", "Inserir", "Importar"]
 )
 
 # --- Checklist de Saídas ---
@@ -1782,9 +1858,81 @@ with tab_saidas:
                 continue
         return False
 
-    # Estado das checkboxes (mantido na sessão)
+    def tem_fica(alojamento, quarto):
+        """Retorna True se houver uma reserva com mais de 1 noite que passa esta noite
+        (checkin <= hoje < checkout), ou seja, o hóspede fica — não há limpeza."""
+        df = st.session_state.get("reservas_editor_df")
+        if df is None or df.empty:
+            df = st.session_state.get("reservas_df")
+        if df is None or df.empty:
+            return False
+
+        aloj_checklist = norm(alojamento.split(" - ")[0])
+        quarto_norm = norm(quarto)
+        is_cama = "cama" in quarto_norm
+        if is_cama:
+            m_cama = re.search(r"cama\s*(\d+)", quarto_norm)
+            item_num = m_cama.group(1) if m_cama else None
+        else:
+            m_quarto = re.search(r"(\d+)", quarto_norm)
+            item_num = m_quarto.group(1) if m_quarto else None
+
+        for _, row in df.iterrows():
+            try:
+                checkin  = pd.to_datetime(row["Check-in"]).date()  if pd.notna(row.get("Check-in"))  else None
+                checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
+                if checkin is None or checkout is None:
+                    continue
+                # Hóspede está cá hoje mas não sai hoje
+                if not (checkin <= hoje < checkout):
+                    continue
+                # Exclui saídas de 1 noite já tratadas por tem_saida_sugerida
+                if checkin == ontem and checkout == hoje:
+                    continue
+
+                aloj_row = norm(str(row.get("Alojamento", "")))
+                if aloj_checklist not in aloj_row and aloj_row not in aloj_checklist:
+                    continue
+
+                unidade = norm(str(row.get("Unidade", "")))
+
+                # Propriedade inteira
+                palavras_casa = ["two bedroom", "house", "entire", "completo", "inteiro",
+                                 "casa inteira", "apartamento inteiro", "whole"]
+                if any(p in unidade for p in palavras_casa):
+                    return True
+                if not unidade or unidade == aloj_checklist:
+                    return True
+
+                # Extrai número da unidade da reserva
+                def _num(txt):
+                    m = re.search(r'\bn[ro]?[º°]?\.?\s*(\d+)\b', txt, re.IGNORECASE)
+                    if m: return m.group(1)
+                    m = re.search(r'\b(?:cama|bed|bunk|room|quarto|suite)\s+(\d+)\b', txt, re.IGNORECASE)
+                    if m: return m.group(1)
+                    m = re.fullmatch(r'[a-z]?(\d+)', txt.strip())
+                    if m: return m.group(1)
+                    return None
+
+                num_u = _num(unidade)
+                is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', unidade, re.IGNORECASE))
+                is_quarto_u = bool(re.search(
+                    r'\b(?:quarto|room|suite|double|twin|single|triple|duplo|individual|triplo|quadruplo)\b',
+                    unidade, re.IGNORECASE))
+
+                if is_cama and item_num:
+                    if (is_cama_u or not is_quarto_u) and num_u == item_num:
+                        return True
+                elif item_num:
+                    if (is_quarto_u or not is_cama_u) and num_u == item_num:
+                        return True
+            except Exception:
+                continue
+        return False
+
+    # Estado das checkboxes — carregado do ficheiro em refresh_data_from_storage; garante existência
     if "saidas_checklist" not in st.session_state:
-        st.session_state["saidas_checklist"] = {}
+        st.session_state["saidas_checklist"] = load_saidas_checklist()
 
     # Renderização da checklist
     # Cores dos alojamentos (igual ao acesso rápido)
@@ -1862,19 +2010,36 @@ with tab_saidas:
                 st.session_state[marcar_flag] = True
                 st.rerun()
         with col2:
+            changed = False
             for quarto in quartos:
                 key = f"saida_{alojamento}_{quarto}"
-                st.session_state["saidas_checklist"][key] = st.checkbox(
-                    quarto,
+                fica = tem_fica(alojamento, quarto)
+                label = (
+                    f'{quarto} \u00a0\u2014\u00a0 <span style="'
+                    f'background:#e8f4fd;color:#1a6fa0;font-size:0.8em;font-weight:600;'
+                    f'padding:1px 6px;border-radius:4px;border:1px solid #9ecfed;">Fica</span>'
+                    if fica else quarto
+                )
+                new_val = st.checkbox(
+                    label if not fica else quarto,
                     value=st.session_state["saidas_checklist"][key],
                     key=key,
+                    help="Hóspede fica esta noite — marcar só se necessário limpar." if fica else None,
                 )
+                if fica:
+                    st.caption("Fica esta noite")
+                if new_val != st.session_state["saidas_checklist"][key]:
+                    st.session_state["saidas_checklist"][key] = new_val
+                    changed = True
+                else:
+                    st.session_state["saidas_checklist"][key] = new_val
+            if changed:
+                save_saidas_checklist(st.session_state["saidas_checklist"])
 
-    # Botão guardar no final do separador Saídas (fora do loop de alojamentos)
+    # Auto-save a cada render
+    save_saidas_checklist(st.session_state["saidas_checklist"])
     st.divider()
-    btn_key = f"btn_guardar_saidas_{random.randint(1, 999999)}"
-    if st.button("Guardar checklist de saídas", key=btn_key, type="primary"):
-        st.success("Checklist de saídas guardada com sucesso!")
+    st.caption(f" Guardado automaticamente — {datetime.now().strftime('%H:%M')}")
 
 uploaded_files = []
 all_data = []
@@ -2025,7 +2190,7 @@ with tab_inserir:
         with mf2:
             manual_alojamento = st.selectbox("Alojamento", ALOJAMENTOS, key="manual_alojamento")
         with mf3:
-            manual_pessoas = st.number_input("Pessoas", min_value=1, step=1, value=1)
+            manual_unidade = st.text_input("Unidade (ex: Quarto 1)")
 
         mf4, mf5, mf6 = st.columns(3)
         with mf4:
@@ -2043,7 +2208,8 @@ with tab_inserir:
                 key_prefix="manual_checkout",
             )
         with mf6:
-            manual_unidade = st.text_input("Unidade (ex: Quarto 1)")
+            st.markdown('<div style="height:52px"></div>', unsafe_allow_html=True)
+            manual_pessoas = st.number_input("Pessoas", min_value=1, step=1, value=1)
 
         mf7, mf8, mf9 = st.columns(3)
         with mf7:
@@ -2096,7 +2262,6 @@ with tab_inserir:
                 _merged_df = sanitize_optional_columns(_merged_df)
                 st.session_state["reservas_df"] = _merged_df
                 st.session_state["reservas_editor_df"] = _merged_df
-                st.session_state["current_df"] = _merged_df
                 save_reservas(_merged_df)
                 st.success("Reserva direta adicionada com sucesso.")
                 st.rerun()
@@ -2190,7 +2355,7 @@ with tab_inserir:
                     st.session_state["inserir_selected_quarto_idx"] = None if _is_selected else _qi2
                     st.rerun()
             with _qcol2:
-                if st.button("🗑️", key=f"quick_rm_quarto_{_qi2}", use_container_width=True, help="Remover quarto"):
+                if st.button("", key=f"quick_rm_quarto_{_qi2}", use_container_width=True, help="Remover quarto"):
                     st.session_state["quartos_disponiveis"].pop(_qi2)
                     save_quartos(st.session_state["quartos_disponiveis"])
                     st.session_state["inserir_selected_quarto_idx"] = None
@@ -2261,6 +2426,11 @@ if import_submit and all_data:
     df_final = normalize_pessoas_column(df_final)
     st.session_state["reservas_df"] = df_final
     save_reservas(df_final)
+    _import_conflicts = detect_conflicts(df_final)
+    if _import_conflicts:
+        st.warning(f"**{len(_import_conflicts)} conflito(s) detectado(s) após importação:**")
+        for _c in _import_conflicts:
+            st.markdown(_c)
 elif not df_guardado.empty:
     df_final = df_guardado.copy()
 
@@ -2308,7 +2478,7 @@ if not df_final.empty:
             df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
         else:
             df_pa = pd.DataFrame()
-        st.subheader("📝 Notas gerais")
+        st.subheader(" Notas gerais")
         st.caption("Estas notas entram no fim do texto exportado de pequenos-almoços e não substituem as notas de cada reserva.")
         st.text_area(
             "Notas para exportação",
@@ -2324,7 +2494,7 @@ if not df_final.empty:
 
         # --- Lista Pequenos-Almoços (movida do tab_pa) ---
         st.divider()
-        st.subheader("📤 Exportar lista")
+        st.subheader(" Exportar lista")
 
         def unidade_curta(valor_unidade):
             import re
@@ -2375,20 +2545,28 @@ if not df_final.empty:
             linhas.append(total_fmt)
 
             # --- Secção Saídas ---
-            if saidas_checklist and checklist_structure:
+            if checklist_structure and (saidas_checklist or any(tem_fica(aloj, q) for aloj, qs in checklist_structure for q in qs)):
                 bold = (lambda x: f"*{x}*" if bold_asterisk else f"**{x}**")
                 linhas.append("")
                 linhas.append(bold("Saídas"))
                 for alojamento, quartos in checklist_structure:
-                    # Filtra apenas os quartos marcados
-                    quartos_checked = [q for q in quartos if saidas_checklist.get(f"saida_{alojamento}_{q}")]
-                    if not quartos_checked:
+                    quartos_checked = [q for q in quartos if saidas_checklist and saidas_checklist.get(f"saida_{alojamento}_{q}")]
+                    quartos_fica = [q for q in quartos if tem_fica(alojamento, q)]
+                    if not quartos_checked and not quartos_fica:
                         continue
-                    # Se todos os quartos estão marcados, mostra COMPLETO
-                    if len(quartos_checked) == len(quartos):
-                        linhas.append(f"{bold(alojamento)}: {bold('COMPLETO')}")
-                    else:
-                        linhas.append(f"{bold(alojamento)}: {', '.join(quartos_checked)}")
+                    partes = []
+                    # Saídas marcadas
+                    saidas_sem_fica = [q for q in quartos_checked if q not in quartos_fica]
+                    if saidas_sem_fica:
+                        if len(saidas_sem_fica) == len(quartos) - len(quartos_fica):
+                            partes.append(bold("COMPLETO"))
+                        else:
+                            partes.append(", ".join(saidas_sem_fica))
+                    # Ficam
+                    if quartos_fica:
+                        fica_txt = ", ".join(quartos_fica)
+                        partes.append(f"Fica: {fica_txt}")
+                    linhas.append(f"{bold(alojamento)}: {' | '.join(partes)}")
 
             # --- Notas ---
             notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
@@ -2409,119 +2587,108 @@ if not df_final.empty:
         checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
         lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("📄 Gerar lista em texto", key="btn_gerar_lista_md_notas"):
-                st.code(lista_texto, language=None)
-        with col2:
-            st.download_button(
-                label="⬇️ Descarregar lista (.txt)",
-                data=lista_texto,
-                file_name="pequenos_almocoslist.txt",
-                mime="text/plain"
-            )
+        if st.button("Gerar lista em texto", key="btn_gerar_lista_md_notas"):
+            st.code(lista_texto, language=None)
 
 
     edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
-    st.session_state["current_df"] = edited_df.copy()
 
     df_pa = edited_df.copy()
     df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
     if df_pa.empty:
         st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
 
-    with tab_importar:
-        with tab_pa:
-            reservas_df = st.session_state.get("reservas_df")
-            if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
-                df_pa = df_pa.sort_values("Hora PA")
-                df_pa_resumo = df_pa.copy()
-                df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
-                resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
-                total_pa_dia = total_pessoas_col(df_pa)
+    with tab_pa:
+        reservas_df = st.session_state.get("reservas_df")
+        if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
+            df_pa = df_pa.sort_values("Hora PA")
+            df_pa_resumo = df_pa.copy()
+            df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
+            resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
+            total_pa_dia = total_pessoas_col(df_pa)
 
-                st.subheader("📊 Resumo por Hora")
-                for _, row in resumo.iterrows():
-                    hora = row["Hora PA"]
-                    total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
-                    total = int(total_num) if pd.notna(total_num) else 0
-                    if total >= 16:
-                        show_pink_alert(f"{hora} → {total} pessoas")
-                    else:
-                        st.success(f"{hora} → {total} pessoas")
-                    grupo = df_pa[df_pa["Hora PA"] == hora]
-                    st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
-
-                st.divider()
-
-                st.subheader("📈 Ocupação do Espaço (Pequeno-Almoço)")
-
-                occupation_data = build_occupation_data(df_pa, suggested_times)
-
-                df_occupation = pd.DataFrame(occupation_data)
-                df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
-                df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
-
-                chart_long = df_occupation.melt(
-                    id_vars=["Hora"],
-                    value_vars=["Verde (<16)", "Vermelho (>=16)"],
-                    var_name="Faixa",
-                    value_name="Total",
-                )
-                occupation_chart = (
-                    alt.Chart(chart_long)
-                    .mark_bar()
-                    .encode(
-                        x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
-                        y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
-                        color=alt.Color(
-                            "Faixa:N",
-                            scale=alt.Scale(
-                                domain=["Verde (<16)", "Vermelho (>=16)"],
-                                range=[THEME["chart_ok"], THEME["chart_over"]],
-                            ),
-                            legend=alt.Legend(title=None),
-                        ),
-                        tooltip=["Hora:N", "Faixa:N", "Total:Q"],
-                    )
-                    .properties(height=280)
-                )
-                st.altair_chart(occupation_chart, use_container_width=True)
-
-                for row in occupation_data:
-                    if row["Pessoas"] >= 16:
-                        pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
-                        pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
-                        show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
-
-                st.subheader("👥 Total de Pequenos-Almoços (dia)")
-                st.metric("Total de pessoas", total_pa_dia)
-
-                st.divider()
-            else:
-                reservas_df = st.session_state.get("reservas_df")
-                if reservas_df is None or reservas_df.empty:
-                    st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+            st.subheader(" Resumo por Hora")
+            for _, row in resumo.iterrows():
+                hora = row["Hora PA"]
+                total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                total = int(total_num) if pd.notna(total_num) else 0
+                if total >= 16:
+                    show_pink_alert(f"{hora} → {total} pessoas")
                 else:
-                    st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
+                    st.success(f"{hora} → {total} pessoas")
+                grupo = df_pa[df_pa["Hora PA"] == hora]
+                st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
 
-# Separador Limpar sempre visível
-with tab_guardar:
-    st.header("Limpar dados da aplicação")
-    st.warning("⚠️ Esta ação apaga todos os dados: reservas, quartos disponíveis, notas gerais, checklist de saídas e estado de sessão. Não pode ser desfeita.")
-    if st.button("🧹 Limpar TUDO", type="primary"):
-        # Limpa reservas
+            st.divider()
+
+            st.subheader(" Ocupação do Espaço (Pequeno-Almoço)")
+
+            occupation_data = build_occupation_data(df_pa, suggested_times)
+
+            df_occupation = pd.DataFrame(occupation_data)
+            df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
+            df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
+
+            chart_long = df_occupation.melt(
+                id_vars=["Hora"],
+                value_vars=["Verde (<16)", "Vermelho (>=16)"],
+                var_name="Faixa",
+                value_name="Total",
+            )
+            occupation_chart = (
+                alt.Chart(chart_long)
+                .mark_bar()
+                .encode(
+                    x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
+                    y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
+                    color=alt.Color(
+                        "Faixa:N",
+                        scale=alt.Scale(
+                            domain=["Verde (<16)", "Vermelho (>=16)"],
+                            range=[THEME["chart_ok"], THEME["chart_over"]],
+                        ),
+                        legend=alt.Legend(title=None),
+                    ),
+                    tooltip=["Hora:N", "Faixa:N", "Total:Q"],
+                )
+                .properties(height=280)
+            )
+            st.altair_chart(occupation_chart, use_container_width=True)
+
+            for row in occupation_data:
+                if row["Pessoas"] >= 16:
+                    pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                    pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
+                    show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
+
+            st.subheader(" Total de Pequenos-Almoços (dia)")
+            st.metric("Total de pessoas", total_pa_dia)
+
+            st.divider()
+        else:
+            reservas_df = st.session_state.get("reservas_df")
+            if reservas_df is None or reservas_df.empty:
+                st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+            else:
+                st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
+
+with tab_importar:
+    st.divider()
+    st.subheader("Limpar dados da aplicação")
+    st.warning("⚠ Esta ação apaga todos os dados: reservas, quartos disponíveis, notas gerais, checklist de saídas e estado de sessão. Não pode ser desfeita.")
+    st.caption("Escreve **CONFIRMAR** para activar o botão.")
+    confirmar_txt = st.text_input("Confirmação", placeholder="CONFIRMAR", label_visibility="collapsed", key="limpar_confirmacao")
+    if st.button("Limpar TUDO", type="primary", disabled=confirmar_txt.strip().upper() != "CONFIRMAR"):
         st.session_state["reservas_df"] = pd.DataFrame()
         st.session_state["reservas_editor_df"] = pd.DataFrame()
-        st.session_state["current_df"] = pd.DataFrame()
-        # Limpa quartos disponíveis
         st.session_state["quartos_disponiveis"] = []
-        # Limpa notas gerais
         st.session_state["notas_gerais_pa"] = ""
         st.session_state.pop("notas_gerais_pa_editor", None)
-        # Limpa checklist de saídas (dict e chaves de widget)
+        st.session_state.pop("limpar_confirmacao", None)
         st.session_state["saidas_checklist"] = {}
         for k in list(st.session_state.keys()):
             if k.startswith("saida_") or k.startswith("marcar_todos_flag_"):
                 del st.session_state[k]
+        if SAIDAS_FILE.exists():
+            SAIDAS_FILE.unlink()
         st.rerun()
