@@ -1,4 +1,5 @@
 import streamlit as st
+import random
 import pandas as pd
 import altair as alt
 from datetime import datetime, timedelta, date
@@ -34,6 +35,7 @@ def require_password():
             st.session_state["is_authenticated"] = True
             st.rerun()
         else:
+            st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
             st.error("Palavra-passe incorreta.")
 
     st.stop()
@@ -42,6 +44,7 @@ def require_password():
 require_password()
 
 # Painel central de cores: muda apenas aqui para atualizar todo o visual.
+
 THEME = {
     "primary": "#008080",
     "primary_dark": "#006666",
@@ -52,6 +55,17 @@ THEME = {
     "alert_text": "#8a2b2b",
     "chart_ok": "#00d084",
     "chart_over": "#e74c3c",
+}
+
+# Estrutura fixa do checklist de saídas (exemplo, ajuste conforme necessário)
+CHECKLIST_STRUCTURE = [
+    ("Alojamento 1", ["Quarto 1", "Quarto 2"]),
+    ("Alojamento 2", ["Quarto 3", "Quarto 4"]),
+]
+
+ALOJAMENTO_BUTTON_COLORS = {
+    "Alojamento 1": "#ef4444",
+    "Alojamento 2": "#3b82f6",
 }
 
 st.markdown(
@@ -1610,15 +1624,204 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.session_state["pending_overcrowding_messages"] = []
         st.rerun()
 
-tab_acesso_rapido, tab_reservas, tab_pa, tab_notas, tab_inserir, tab_importar, tab_guardar, tab_saidas = st.tabs(
-    ["Acesso rápido", "Reservas", "Pequenos almoços", "Notas", "Inserir", "Importar", "Limpar", "Saídas"]
+tab_acesso_rapido, tab_reservas, tab_pa, tab_saidas, tab_notas, tab_inserir, tab_importar, tab_guardar = st.tabs(
+    ["Acesso rápido", "Reservas", "Pequenos almoços", "Saídas", "Notas", "Inserir", "Importar", "Limpar"]
 )
 
 # --- Checklist de Saídas ---
 with tab_saidas:
     st.header("Checklist de Saídas (Limpezas)")
     st.info("Visualize e confirme as saídas previstas para hoje. Marque/desmarque manualmente conforme necessário.")
-    # Aqui será implementada a checklist dinâmica conforme o plano.
+
+    # --- Estrutura fixa dos alojamentos e quartos ---
+    CHECKLIST_STRUCTURE = [
+        ("ABH", [
+            "Quarto 1", "Quarto 2", "Quarto 3", "Quarto 4 - Cama 1", "Quarto 4 - Cama 2", "Quarto 4 - Cama 3", "Quarto 4 - Cama 4", "Quarto 5"
+        ]),
+        ("AFH", [
+            "Quarto 1", "Quarto 2", "Quarto 3", "Quarto 4", "Quarto 5", "Quarto 6"
+        ]),
+        ("DUNAS", [
+            "Quarto 1", "Quarto 2", "Quarto 3"
+        ]),
+        ("PIPO", [
+            "Quarto 1", "Quarto 2"
+        ]),
+        ("ESCAPE", [
+            "Quarto 1", "Quarto 2"
+        ]),
+        ("MARÉS", [
+            "Quarto 1", "Quarto 2", "Quarto 3"
+        ]),
+        ("FOZ - Apartamento A", [
+            "Quarto 1", "Quarto 2"
+        ]),
+        ("FOZ - Apartamento B", [
+            "Quarto 3", "Quarto 4"
+        ]),
+        ("DUNAS2", [
+            "Quarto 1", "Quarto 2", "Quarto 3"
+        ]),
+    ]
+
+    # --- Carregar dados de reservas para sugerir saídas ---
+    reservas_df = st.session_state.get("reservas_df")
+    hoje = date.today()
+    ontem = hoje - timedelta(days=1)
+
+    # Função para identificar se há saída prevista para o quarto
+    import re
+    def norm(txt):
+        return str(txt).strip().lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+
+    def tem_saida_sugerida(alojamento, quarto):
+        if reservas_df is None or reservas_df.empty:
+            return False
+        aloj_norm = norm(alojamento.split(" - ")[0])
+        quarto_norm = norm(quarto)
+        # Casa completa: PIPO ou ESCAPE e unidade contém "two bedroom house"
+        if aloj_norm in ["pipo", "escape"]:
+            for _, row in reservas_df.iterrows():
+                try:
+                    checkin = pd.to_datetime(row["Check-in"]).date() if not pd.isna(row["Check-in"]) else None
+                    checkout = pd.to_datetime(row["Check-out"]).date() if not pd.isna(row["Check-out"]) else None
+                    unidade = norm(str(row["Unidade"]))
+                    if checkin == ontem and checkout == hoje and "two bedroom house" in unidade:
+                        return True
+                except Exception:
+                    continue
+        # Matching flexível para quartos/camas
+        # Extrai número do quarto/cama
+        def extrai_numero(txt):
+            m = re.search(r"(\d+)", txt)
+            return m.group(1) if m else None
+        quarto_num = extrai_numero(quarto_norm)
+        is_cama = "cama" in quarto_norm or re.match(r"c\d", quarto_norm)
+        is_quarto = "quarto" in quarto_norm or "room" in quarto_norm or re.match(r"q\d", quarto_norm)
+        # Dormitório: se todas as camas do quarto 4 estiverem ocupadas, marca o quarto 4
+        if aloj_norm == "abh" and "quarto 4" in quarto_norm and not is_cama:
+            camas_ocupadas = set()
+            for _, row in reservas_df.iterrows():
+                try:
+                    checkin = pd.to_datetime(row["Check-in"]).date() if not pd.isna(row["Check-in"]) else None
+                    checkout = pd.to_datetime(row["Check-out"]).date() if not pd.isna(row["Check-out"]) else None
+                    unidade = norm(str(row["Unidade"]))
+                    if checkin == ontem and checkout == hoje and ("cama" in unidade or re.match(r"c\d", unidade)):
+                        camas_ocupadas.add(extrai_numero(unidade))
+                except Exception:
+                    continue
+            if len(camas_ocupadas) == 4:
+                return True
+        # Matching normal para quartos/camas
+        for _, row in reservas_df.iterrows():
+            try:
+                checkin = pd.to_datetime(row["Check-in"]).date() if not pd.isna(row["Check-in"]) else None
+                checkout = pd.to_datetime(row["Check-out"]).date() if not pd.isna(row["Check-out"]) else None
+                unidade = norm(str(row["Unidade"]))
+                aloj_row = norm(str(row["Alojamento"]))
+                if checkin == ontem and checkout == hoje and aloj_norm in aloj_row:
+                    # Matching flexível: aceita variações
+                    if is_cama:
+                        # Cama: aceita "cama 1", "c1", etc.
+                        if quarto_num and (f"cama {quarto_num}" in unidade or f"c{quarto_num}" in unidade):
+                            return True
+                    elif is_quarto:
+                        # Quarto: aceita "quarto 1", "room 1", "q1", "1"
+                        if quarto_num and (f"quarto {quarto_num}" in unidade or f"room {quarto_num}" in unidade or f"q{quarto_num}" in unidade or unidade == quarto_num):
+                            return True
+            except Exception:
+                continue
+        return False
+
+    # Estado das checkboxes (mantido na sessão)
+    if "saidas_checklist" not in st.session_state:
+        st.session_state["saidas_checklist"] = {}
+
+    # Renderização da checklist
+    # Cores dos alojamentos (igual ao acesso rápido)
+    ALOJAMENTO_EMOJIS = {
+        "ABH": "🟥",
+        "AFH": "🟦",
+        "PIPO": "🟩",
+        "DUNAS": "🟨",
+        "DUNAS2": "🟪",
+        "FOZ": "🟧",
+        "ESCAPE": "🟫",
+        "MARES": "⬛",
+    }
+    ALOJAMENTO_BUTTON_COLORS = {
+        "ABH": "#ef4444",
+        "AFH": "#3b82f6",
+        "PIPO": "#22c55e",
+        "DUNAS": "#facc15",
+        "DUNAS2": "#a855f7",
+        "FOZ": "#fb923c",
+        "ESCAPE": "#92400e",
+        "MARES": "#374151",
+    }
+
+
+
+    for alojamento, quartos in CHECKLIST_STRUCTURE:
+        # Extrai a chave base do alojamento para cor
+        if alojamento.startswith("FOZ"):
+            aloj_key = "FOZ"
+        elif alojamento.startswith("DUNAS2"):
+            aloj_key = "DUNAS2"
+        elif alojamento.startswith("DUNAS"):
+            aloj_key = "DUNAS"
+        elif alojamento.startswith("ESCAPE"):
+            aloj_key = "ESCAPE"
+        elif alojamento.startswith("PIPO"):
+            aloj_key = "PIPO"
+        elif alojamento.startswith("AFH"):
+            aloj_key = "AFH"
+        elif alojamento.startswith("ABH"):
+            aloj_key = "ABH"
+        elif alojamento.startswith("MARÉS") or alojamento.startswith("MARES"):
+            aloj_key = "MARES"
+        else:
+            aloj_key = alojamento.upper()
+        cor = ALOJAMENTO_BUTTON_COLORS.get(aloj_key, "#9ca3af")
+        st.markdown(f"<div style='background:{cor};color:#fff;padding:0.5rem 1rem;border-radius:10px;margin-top:1.5rem;margin-bottom:0.5rem;display:inline-block;font-weight:700;font-size:1.2rem;'>"
+                    f"{alojamento}"
+                    f"</div>", unsafe_allow_html=True)
+        col1, col2 = st.columns([1, 5])
+        # Inicializa o estado ANTES do botão
+        for quarto in quartos:
+            key = f"saida_{alojamento}_{quarto}"
+            sugerida = tem_saida_sugerida(alojamento, quarto)
+            if key not in st.session_state["saidas_checklist"]:
+                st.session_state["saidas_checklist"][key] = sugerida
+
+        # Se a flag de marcar todos deste alojamento estiver ativa, marca todos e limpa a flag
+        marcar_flag = f"marcar_todos_flag_{alojamento}"
+        if st.session_state.get(marcar_flag, False):
+            for quarto in quartos:
+                key = f"saida_{alojamento}_{quarto}"
+                st.session_state["saidas_checklist"][key] = True
+                st.session_state[key] = True  # atualiza também o estado do widget diretamente
+            st.session_state[marcar_flag] = False
+
+        with col1:
+            marcar_todos = st.button("Marcar todos", key=f"marcar_todos_{alojamento}")
+            if marcar_todos:
+                st.session_state[marcar_flag] = True
+                st.rerun()
+        with col2:
+            for quarto in quartos:
+                key = f"saida_{alojamento}_{quarto}"
+                st.session_state["saidas_checklist"][key] = st.checkbox(
+                    quarto,
+                    value=st.session_state["saidas_checklist"][key],
+                    key=key,
+                )
+
+    # Botão guardar no final do separador Saídas (fora do loop de alojamentos)
+    st.divider()
+    btn_key = f"btn_guardar_saidas_{random.randint(1, 999999)}"
+    if st.button("Guardar checklist de saídas", key=btn_key, type="primary"):
+        st.success("Checklist de saídas guardada com sucesso!")
 
 uploaded_files = []
 all_data = []
@@ -2036,13 +2239,31 @@ if not df_final.empty:
 
     st.session_state["reservas_editor_df"] = sanitize_optional_columns(df_final.copy())
 
+
     with tab_acesso_rapido:
-        render_quick_access_tab(st.session_state["reservas_editor_df"], suggested_times)
+        reservas_df = st.session_state.get("reservas_df")
+        if reservas_df is not None and not reservas_df.empty:
+            render_quick_access_tab(st.session_state["reservas_editor_df"], suggested_times)
+        else:
+            st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+
 
     with tab_reservas:
-        render_reservas_editor(suggested_times)
+        reservas_df = st.session_state.get("reservas_df")
+        if reservas_df is not None and not reservas_df.empty:
+            render_reservas_editor(suggested_times)
+        else:
+            st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+
 
     with tab_notas:
+        # Garante que df_pa está sempre definido
+        if "reservas_editor_df" in st.session_state:
+            edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
+            df_pa = edited_df.copy()
+            df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
+        else:
+            df_pa = pd.DataFrame()
         st.subheader("📝 Notas gerais")
         st.caption("Estas notas entram no fim do texto exportado de pequenos-almoços e não substituem as notas de cada reserva.")
         st.text_area(
@@ -2057,261 +2278,188 @@ if not df_final.empty:
             save_notas_gerais(notas_limpas)
             st.success("Notas gerais guardadas.")
 
+        # --- Lista Pequenos-Almoços (movida do tab_pa) ---
+        st.divider()
+        st.subheader("📤 Exportar lista")
+
+        def unidade_curta(valor_unidade):
+            import re
+            if pd.isna(valor_unidade):
+                return ""
+            partes = [p.strip() for p in str(valor_unidade).split(",") if p.strip()]
+            resultado = []
+            for parte in partes:
+                m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+                if m_quarto:
+                    resultado.append(f"Q{int(m_quarto.group(1))}")
+                    continue
+                m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
+                if m_cama:
+                    resultado.append(f"C{int(m_cama.group(1))}")
+                    continue
+                resultado.append(parte)
+            return ", ".join(resultado)
+
+
+        def gerar_lista(df_pa, saidas_checklist=None, checklist_structure=None, bold_asterisk=False):
+            def nota_valida(v):
+                return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
+            linhas = [f"{'*Pequenos-Almoços*' if bold_asterisk else 'Pequenos-Almoços'}\n"]
+            for hora in sorted(df_pa["Hora PA"].unique()):
+                grupo = df_pa[df_pa["Hora PA"] == hora]
+                hora_fmt = f"*{hora}h*" if bold_asterisk else f"{hora}h"
+                linhas.append(hora_fmt)
+                for _, r in grupo.iterrows():
+                    nome = r["Nome"]
+                    aloj = r["Alojamento"]
+                    unidade = unidade_curta(r["Unidade"])
+                    pax_num = pd.to_numeric(r.get("Pessoas"), errors="coerce")
+                    pax = int(pax_num) if pd.notna(pax_num) else 0
+                    is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
+                    nota = r.get("Notas", None)
+                    nota_texto = str(nota).strip() if nota_valida(nota) else ""
+                    tags = []
+                    if is_pago:
+                        tags.append("pago")
+                    if nota_texto:
+                        tags.append(nota_texto)
+                    sufixo = f" (*{'; '.join(tags)}*)" if tags else ""
+                    linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
+                linhas.append("")
+            total_pax = total_pessoas_col(df_pa)
+            total_fmt = f"*Total de pessoas: {total_pax}*" if bold_asterisk else f"Total de pessoas: {total_pax}"
+            linhas.append(total_fmt)
+
+            # --- Secção Saídas ---
+            if saidas_checklist and checklist_structure:
+                bold = (lambda x: f"*{x}*" if bold_asterisk else f"**{x}**")
+                linhas.append("")
+                linhas.append(bold("Saídas"))
+                for alojamento, quartos in checklist_structure:
+                    # Filtra apenas os quartos marcados
+                    quartos_checked = [q for q in quartos if saidas_checklist.get(f"saida_{alojamento}_{q}")]
+                    if not quartos_checked:
+                        continue
+                    # Se todos os quartos estão marcados, mostra COMPLETO
+                    if len(quartos_checked) == len(quartos):
+                        linhas.append(f"{bold(alojamento)}: {bold('COMPLETO')}")
+                    else:
+                        linhas.append(f"{bold(alojamento)}: {', '.join(quartos_checked)}")
+
+            # --- Notas ---
+            notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
+            if notas_gerais:
+                linhas.append("")
+                linhas.append(f"{'*Notas*' if bold_asterisk else 'Notas:'}")
+                linhas.append(notas_gerais)
+            return "\n".join(linhas)
+
+
+        def gerar_lista_md(df_pa, saidas_checklist=None, checklist_structure=None):
+            # Versão markdown (negrito com **)
+            return gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=False).replace("*", "**")
+
+
+        # Obter dados do separador Saídas
+        saidas_checklist = st.session_state.get("saidas_checklist", {})
+        checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
+        lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("📄 Gerar lista em texto", key="btn_gerar_lista_md_notas"):
+                st.code(lista_texto, language=None)
+        with col2:
+            st.download_button(
+                label="⬇️ Descarregar lista (.txt)",
+                data=lista_texto,
+                file_name="pequenos_almocoslist.txt",
+                mime="text/plain"
+            )
+
+
     edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
     st.session_state["current_df"] = edited_df.copy()
 
     df_pa = edited_df.copy()
     df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
-
-    with tab_pa:
-        if len(df_pa) > 0:
-            df_pa = df_pa.sort_values("Hora PA")
-            df_pa_resumo = df_pa.copy()
-            df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
-            resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
-            total_pa_dia = total_pessoas_col(df_pa)
-
-            st.subheader("📊 Resumo por Hora")
-            for _, row in resumo.iterrows():
-                hora = row["Hora PA"]
-                total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
-                total = int(total_num) if pd.notna(total_num) else 0
-                if total >= 16:
-                    show_pink_alert(f"{hora} → {total} pessoas")
-                else:
-                    st.success(f"{hora} → {total} pessoas")
-                grupo = df_pa[df_pa["Hora PA"] == hora]
-                st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
-
-            st.divider()
-
-            st.subheader("📈 Ocupação do Espaço (Pequeno-Almoço)")
-
-            occupation_data = build_occupation_data(df_pa, suggested_times)
-
-            df_occupation = pd.DataFrame(occupation_data)
-            df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
-            df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
-
-            chart_long = df_occupation.melt(
-                id_vars=["Hora"],
-                value_vars=["Verde (<16)", "Vermelho (>=16)"],
-                var_name="Faixa",
-                value_name="Total",
-            )
-            occupation_chart = (
-                alt.Chart(chart_long)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
-                    y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
-                    color=alt.Color(
-                        "Faixa:N",
-                        scale=alt.Scale(
-                            domain=["Verde (<16)", "Vermelho (>=16)"],
-                            range=[THEME["chart_ok"], THEME["chart_over"]],
-                        ),
-                        legend=alt.Legend(title=None),
-                    ),
-                    tooltip=["Hora:N", "Faixa:N", "Total:Q"],
-                )
-                .properties(height=280)
-            )
-            st.altair_chart(occupation_chart, use_container_width=True)
-
-            for row in occupation_data:
-                if row["Pessoas"] >= 16:
-                    pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
-                    pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
-                    show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
-
-            st.subheader("👥 Total de Pequenos-Almoços (dia)")
-            st.metric("Total de pessoas", total_pa_dia)
-
-            st.divider()
-            st.subheader("📋 Lista para Pequenos-Almoços")
-
-            def unidade_curta(valor_unidade):
-                import re
-
-                if pd.isna(valor_unidade):
-                    return ""
-
-                partes = [p.strip() for p in str(valor_unidade).split(",") if p.strip()]
-                resultado = []
-                for parte in partes:
-                    m_quarto = re.search(r"quarto[^\d]*(\d+)", parte, flags=re.IGNORECASE)
-                    if m_quarto:
-                        resultado.append(f"Q{int(m_quarto.group(1))}")
-                        continue
-
-                    m_cama = re.search(r"cama[^\d]*(\d+)", parte, flags=re.IGNORECASE)
-                    if m_cama:
-                        resultado.append(f"C{int(m_cama.group(1))}")
-                        continue
-
-                    resultado.append(parte)
-
-                return ", ".join(resultado)
-
-            def gerar_lista(df_pa):
-                def nota_valida(v):
-                    return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
-
-                linhas = ["🥐 Pequenos-Almoços\n"]
-                for hora in sorted(df_pa["Hora PA"].unique()):
-                    grupo = df_pa[df_pa["Hora PA"] == hora]
-                    linhas.append(f"{hora}h")
-                    for _, r in grupo.iterrows():
-                        nome = r["Nome"]
-                        aloj = r["Alojamento"]
-                        unidade = unidade_curta(r["Unidade"])
-                        pax_num = pd.to_numeric(r.get("Pessoas"), errors="coerce")
-                        pax = int(pax_num) if pd.notna(pax_num) else 0
-                        is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
-                        nota = r.get("Notas", None)
-                        nota_texto = str(nota).strip() if nota_valida(nota) else ""
-                        tags = []
-                        if is_pago:
-                            tags.append("pago")
-                        if nota_texto:
-                            tags.append(nota_texto)
-                        sufixo = f" (*{'; '.join(tags)}*)" if tags else ""
-                        linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
-                    linhas.append("")
-
-                linhas.append(f"Total de pessoas: {total_pessoas_col(df_pa)}")
-
-                notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
-                if notas_gerais:
-                    linhas.append("")
-                    linhas.append("Notas:")
-                    linhas.append(notas_gerais)
-
-                return "\n".join(linhas)
-
-            def gerar_lista_md(df_pa):
-                def nota_valida(v):
-                    return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
-
-                linhas = ["**🥐 Pequenos-Almoços**\n"]
-                for hora in sorted(df_pa["Hora PA"].unique()):
-                    grupo = df_pa[df_pa["Hora PA"] == hora]
-                    linhas.append(f"**{hora}h**")
-                    for _, r in grupo.iterrows():
-                        nome = r["Nome"]
-                        aloj = r["Alojamento"]
-                        unidade = unidade_curta(r["Unidade"])
-                        pax_num = pd.to_numeric(r.get("Pessoas"), errors="coerce")
-                        pax = int(pax_num) if pd.notna(pax_num) else 0
-                        is_pago = str(r.get("PA pago", "")).strip().lower() in ["sim", "yes", "s"]
-                        nota = r.get("Notas", None)
-                        nota_texto = str(nota).strip() if nota_valida(nota) else ""
-                        tags = []
-                        if is_pago:
-                            tags.append("pago")
-                        if nota_texto:
-                            tags.append(nota_texto)
-                        sufixo = f" (*{'; '.join(tags)}*)" if tags else ""
-                        linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
-                    linhas.append("")
-
-                linhas.append(f"**Total de pessoas:** {total_pessoas_col(df_pa)}")
-
-                notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
-                if notas_gerais:
-                    linhas.append("")
-                    linhas.append("**Notas:**")
-                    linhas.append(notas_gerais)
-
-                return "\n\n".join(linhas)
-
-            lista_texto = gerar_lista(df_pa)
-
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("📄 Gerar lista em texto"):
-                    st.markdown(gerar_lista_md(df_pa))
-                    st.code(lista_texto, language=None)
-            with col2:
-                st.download_button(
-                    label="⬇️ Descarregar lista (.txt)",
-                    data=lista_texto,
-                    file_name="pequenos_almocoslist.txt",
-                    mime="text/plain"
-                )
-        else:
-            st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
+    if df_pa.empty:
+        st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
 
     with tab_importar:
-        if import_submit and all_data:
-            if novas_reservas_count > 0 or reservas_atualizadas_count > 0:
-                st.success(
-                    f"Importação concluída: {novas_reservas_count} nova(s) e {reservas_atualizadas_count} atualizada(s)."
-                )
-            else:
-                st.info("Sem alterações: as reservas importadas já estavam iguais.")
+        with tab_pa:
+            reservas_df = st.session_state.get("reservas_df")
+            if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
+                df_pa = df_pa.sort_values("Hora PA")
+                df_pa_resumo = df_pa.copy()
+                df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
+                resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
+                total_pa_dia = total_pessoas_col(df_pa)
 
-    with tab_guardar:
-        if "clear_mode" not in st.session_state:
-            st.session_state["clear_mode"] = None
-
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if st.button("Limpar tudo", use_container_width=True):
-                st.session_state["clear_mode"] = "all"
-        with b2:
-            if st.button("Limpar reservas diretas", use_container_width=True):
-                st.session_state["clear_mode"] = "diretas"
-        with b3:
-            if st.button("Limpar reservas importadas", use_container_width=True):
-                st.session_state["clear_mode"] = "importadas"
-
-        clear_mode = st.session_state.get("clear_mode")
-        if clear_mode:
-            if clear_mode == "all":
-                st.warning("Confirma que queres apagar todas as reservas guardadas?")
-            elif clear_mode == "diretas":
-                st.warning("Confirma que queres apagar apenas as reservas diretas?")
-            elif clear_mode == "importadas":
-                st.warning("Confirma que queres apagar apenas as reservas importadas?")
-
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Confirmar", type="primary", use_container_width=True):
-                    current_df = st.session_state.get("reservas_df", pd.DataFrame()).copy()
-                    if not current_df.empty and "Origem" not in current_df.columns:
-                        current_df["Origem"] = "Importada"
-
-                    if clear_mode == "all":
-                        updated_df = pd.DataFrame()
-                    elif clear_mode == "diretas":
-                        updated_df = current_df[
-                            current_df["Origem"].astype(str).str.lower().str.strip() != "direta"
-                        ].copy()
+                st.subheader("📊 Resumo por Hora")
+                for _, row in resumo.iterrows():
+                    hora = row["Hora PA"]
+                    total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                    total = int(total_num) if pd.notna(total_num) else 0
+                    if total >= 16:
+                        show_pink_alert(f"{hora} → {total} pessoas")
                     else:
-                        updated_df = current_df[
-                            current_df["Origem"].astype(str).str.lower().str.strip() != "importada"
-                        ].copy()
+                        st.success(f"{hora} → {total} pessoas")
+                    grupo = df_pa[df_pa["Hora PA"] == hora]
+                    st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
 
-                    updated_df = sanitize_optional_columns(updated_df)
-                    st.session_state["current_df"] = updated_df.copy()
-                    st.session_state["reservas_df"] = updated_df.copy()
-                    st.session_state["reservas_editor_df"] = updated_df.copy()
-                    st.session_state["pending_overcrowding_messages"] = []
-                    st.session_state["show_overcrowding_ack"] = False
-                    st.session_state["clear_mode"] = None
-                    save_reservas(updated_df)
-                    st.success("Limpeza concluída com sucesso.")
-                    st.rerun()
-            with c2:
-                if st.button("Cancelar", use_container_width=True):
-                    st.session_state["clear_mode"] = None
-else:
-    with tab_acesso_rapido:
-        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
-    with tab_reservas:
-        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+                st.divider()
+
+                st.subheader("📈 Ocupação do Espaço (Pequeno-Almoço)")
+
+                occupation_data = build_occupation_data(df_pa, suggested_times)
+
+                df_occupation = pd.DataFrame(occupation_data)
+                df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
+                df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
+
+                chart_long = df_occupation.melt(
+                    id_vars=["Hora"],
+                    value_vars=["Verde (<16)", "Vermelho (>=16)"],
+                    var_name="Faixa",
+                    value_name="Total",
+                )
+                occupation_chart = (
+                    alt.Chart(chart_long)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
+                        y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
+                        color=alt.Color(
+                            "Faixa:N",
+                            scale=alt.Scale(
+                                domain=["Verde (<16)", "Vermelho (>=16)"],
+                                range=[THEME["chart_ok"], THEME["chart_over"]],
+                            ),
+                            legend=alt.Legend(title=None),
+                        ),
+                        tooltip=["Hora:N", "Faixa:N", "Total:Q"],
+                    )
+                    .properties(height=280)
+                )
+                st.altair_chart(occupation_chart, use_container_width=True)
+
+                for row in occupation_data:
+                    if row["Pessoas"] >= 16:
+                        pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                        pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
+                        show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
+
+                st.subheader("👥 Total de Pequenos-Almoços (dia)")
+                st.metric("Total de pessoas", total_pa_dia)
+
+                st.divider()
+            else:
+                reservas_df = st.session_state.get("reservas_df")
+                if reservas_df is None or reservas_df.empty:
+                    st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+                else:
+                    st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
     with tab_pa:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
     with tab_notas:
