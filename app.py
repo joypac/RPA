@@ -1727,7 +1727,9 @@ with tab_saidas:
     st.info("Visualize e confirme as saídas previstas para amanhã. Marque/desmarque manualmente conforme necessário.")
 
     with st.expander("🔍 Diagnóstico (temporário)", expanded=False):
-        _df_diag = st.session_state.get("reservas_editor_df") or st.session_state.get("reservas_df")
+        _df_diag = st.session_state.get("reservas_editor_df")
+        if _df_diag is None or (isinstance(_df_diag, pd.DataFrame) and _df_diag.empty):
+            _df_diag = st.session_state.get("reservas_df")
         if _df_diag is None or _df_diag.empty:
             st.write("Sem dados carregados.")
         else:
