@@ -461,20 +461,28 @@ def save_notas_gerais(texto):
 
 
 def load_saidas_checklist():
+    """Carrega checklist guardada. Se for de outro dia, devolve {} (recomeça do zero)."""
     if not SAIDAS_FILE.exists():
         return {}
     try:
         with SAIDAS_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            return {k: bool(v) for k, v in data.items()}
+            saved_date = data.get("_date")
+            today_str = date.today().isoformat()
+            if saved_date != today_str:
+                # Novo dia — checklist fresca
+                return {}
+            return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
     except Exception:
         pass
     return {}
 
 
 def save_saidas_checklist(checklist: dict):
-    _atomic_write_json(SAIDAS_FILE, {k: bool(v) for k, v in checklist.items()})
+    payload = {k: bool(v) for k, v in checklist.items() if not k.startswith("_")}
+    payload["_date"] = date.today().isoformat()
+    _atomic_write_json(SAIDAS_FILE, payload)
 
 
 def refresh_data_from_storage():
@@ -2057,6 +2065,7 @@ with tab_saidas:
                 st.session_state[key] = True
             elif key not in st.session_state["saidas_checklist"]:
                 st.session_state["saidas_checklist"][key] = False
+            # Se não há sugestão e a chave já existe, mantém o valor manual do utilizador
 
         # Se a flag de marcar todos deste alojamento estiver ativa, marca todos e limpa a flag
         marcar_flag = f"marcar_todos_flag_{alojamento}"
