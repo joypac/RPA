@@ -1841,7 +1841,8 @@ with tab_saidas:
                 txt, re.IGNORECASE
             ))
 
-            # Extrai número: nº/no./nr. têm prioridade, depois palavra+número, depois standalone
+            # Extrai número: nº/no./nr. têm prioridade, depois palavra+número,
+            # depois "- N" no fim (ex: "Quarto Duplo com wc partilhada - 1"), depois standalone
             num = None
             m = re.search(r'\bn[ro]?[º°]?\.?\s*(\d+)\b', txt, re.IGNORECASE)
             if m:
@@ -1854,20 +1855,27 @@ with tab_saidas:
                 if m:
                     num = m.group(1)
                 else:
-                    m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
+                    # Número após traço no fim: "Quarto Duplo com wc partilhada - 1"
+                    m = re.search(r'-\s*(\d+)\s*$', txt)
                     if m:
-                        prefix = m.group(1).lower()
-                        num = m.group(2)
-                        # Prefixo Q = quarto, C = cama (abreviaturas do unidade_curta)
-                        if prefix == 'q':
-                            return ('quarto', num)
-                        if prefix == 'c':
-                            return ('cama', num)
+                        num = m.group(1)
+                    else:
+                        m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
+                        if m:
+                            prefix = m.group(1).lower()
+                            num = m.group(2)
+                            # Prefixo Q = quarto, C = cama (abreviaturas do unidade_curta)
+                            if prefix == 'q':
+                                return ('quarto', num)
+                            if prefix == 'c':
+                                return ('cama', num)
 
-            if is_cama_u:
-                return ('cama', num)
+            # Quarto tem prioridade sobre cama quando ambos os termos estão presentes
+            # (ex: "Quarto Twin nº5 beliche" é um quarto com beliches, não uma cama)
             if is_quarto_u:
                 return ('quarto', num)
+            if is_cama_u:
+                return ('cama', num)
             if num:
                 return ('ambiguo', num)
             return (None, None)
