@@ -43,15 +43,6 @@ def require_password():
 
 require_password()
 
-
-# Aviso se não houver dados inseridos ou importados
-if (
-    "reservas_df" not in st.session_state
-    or st.session_state["reservas_df"] is None
-    or (isinstance(st.session_state["reservas_df"], pd.DataFrame) and st.session_state["reservas_df"].empty)
-):
-    st.warning("⚠️ Ainda não existem dados inseridos ou importados. Usa o separador 'Importar' ou 'Inserir' para começar.")
-
 # Painel central de cores: muda apenas aqui para atualizar todo o visual.
 
 THEME = {
@@ -156,6 +147,16 @@ st.markdown(
                     display: none !important;
                     visibility: hidden !important;
                 }}
+            }}
+
+            /* Esconde o input nativo do browser no file uploader para evitar texto duplicado */
+            [data-testid="stFileUploader"] input[type="file"] {{
+                opacity: 0 !important;
+                position: absolute !important;
+                width: 0 !important;
+                height: 0 !important;
+                overflow: hidden !important;
+                pointer-events: none !important;
             }}
 
         </style>
