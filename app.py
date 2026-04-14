@@ -1611,8 +1611,14 @@ if st.session_state["show_overcrowding_ack"] and st.session_state["pending_overc
         st.rerun()
 
 tab_acesso_rapido, tab_reservas, tab_pa, tab_notas, tab_inserir, tab_importar, tab_guardar = st.tabs(
-    ["Acesso rápido", "Reservas", "Pequenos almoços", "Notas", "Inserir", "Importar", "Limpar"]
+    ["Acesso rápido", "Reservas", "Pequenos almoços", "Notas", "Inserir", "Importar", "Limpar", "Saídas"]
 )
+
+# --- Checklist de Saídas ---
+with st.tabs(["Acesso rápido", "Reservas", "Pequenos almoços", "Notas", "Inserir", "Importar", "Limpar", "Saídas"])[-1]:
+    st.header("Checklist de Saídas (Limpezas)")
+    st.info("Visualize e confirme as saídas previstas para hoje. Marque/desmarque manualmente conforme necessário.")
+    # Aqui será implementada a checklist dinâmica conforme o plano.
 
 uploaded_files = []
 all_data = []
