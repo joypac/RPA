@@ -1714,6 +1714,13 @@ tab_acesso_rapido, tab_reservas, tab_pa, tab_saidas, tab_notas, tab_inserir, tab
     ["Acesso rápido", "Reservas", "Pequenos almoços", "Saídas", "Notas", "Inserir", "Importar"]
 )
 
+if (
+    "reservas_df" not in st.session_state
+    or st.session_state["reservas_df"] is None
+    or (isinstance(st.session_state["reservas_df"], pd.DataFrame) and st.session_state["reservas_df"].empty)
+):
+    st.warning("⚠️ Ainda não existem dados inseridos ou importados. Usa o separador 'Importar' ou 'Inserir' para começar.")
+
 # --- Checklist de Saídas ---
 with tab_saidas:
     st.header("Checklist de Saídas (Limpezas)")
