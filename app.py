@@ -2686,19 +2686,41 @@ with tab_importar:
     st.divider()
     st.subheader("Limpar dados da aplicação")
     st.warning("⚠ Esta ação apaga todos os dados: reservas, quartos disponíveis, notas gerais, checklist de saídas e estado de sessão. Não pode ser desfeita.")
-    st.caption("Escreve **CONFIRMAR** para activar o botão.")
-    confirmar_txt = st.text_input("Confirmação", placeholder="CONFIRMAR", label_visibility="collapsed", key="limpar_confirmacao")
-    if st.button("Limpar TUDO", type="primary", disabled=confirmar_txt.strip().upper() != "CONFIRMAR"):
-        st.session_state["reservas_df"] = pd.DataFrame()
-        st.session_state["reservas_editor_df"] = pd.DataFrame()
-        st.session_state["quartos_disponiveis"] = []
-        st.session_state["notas_gerais_pa"] = ""
-        st.session_state.pop("notas_gerais_pa_editor", None)
-        st.session_state.pop("limpar_confirmacao", None)
-        st.session_state["saidas_checklist"] = {}
-        for k in list(st.session_state.keys()):
-            if k.startswith("saida_") or k.startswith("marcar_todos_flag_"):
-                del st.session_state[k]
-        if SAIDAS_FILE.exists():
-            SAIDAS_FILE.unlink()
-        st.rerun()
+
+    if not st.session_state.get("limpar_confirmar_pendente", False):
+        if st.button("Limpar TUDO", key="limpar_tudo_btn"):
+            st.session_state["limpar_confirmar_pendente"] = True
+            st.rerun()
+    else:
+        st.markdown(
+            f'<style>'
+            f'div[data-testid="stButton"] button[kind="primary"]#limpar_confirmar_btn,'
+            f'div[data-testid="stButton"]:has(button[key="limpar_confirmar_btn"]) button {{'
+            f'  background-color: {THEME["tab_active"]} !important;'
+            f'  border-color: {THEME["tab_active"]} !important;'
+            f'  color: #fff !important;'
+            f'}}'
+            f'</style>',
+            unsafe_allow_html=True,
+        )
+        col_sim, col_nao, _ = st.columns([1, 1, 4])
+        with col_sim:
+            if st.button("Confirmar limpeza", key="limpar_confirmar_btn", type="primary"):
+                st.session_state["limpar_confirmar_pendente"] = False
+                st.session_state["reservas_df"] = pd.DataFrame()
+                st.session_state["reservas_editor_df"] = pd.DataFrame()
+                st.session_state["quartos_disponiveis"] = []
+                st.session_state["notas_gerais_pa"] = ""
+                st.session_state.pop("notas_gerais_pa_editor", None)
+                st.session_state["saidas_checklist"] = {}
+                for k in list(st.session_state.keys()):
+                    if k.startswith("saida_") or k.startswith("marcar_todos_flag_"):
+                        del st.session_state[k]
+                for f in [RESERVAS_FILE, QUARTOS_FILE, NOTAS_GERAIS_FILE, SAIDAS_FILE]:
+                    if f.exists():
+                        f.unlink()
+                st.rerun()
+        with col_nao:
+            if st.button("Cancelar", key="limpar_cancelar_btn"):
+                st.session_state["limpar_confirmar_pendente"] = False
+                st.rerun()
