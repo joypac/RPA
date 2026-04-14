@@ -2241,19 +2241,10 @@ if not df_final.empty:
 
 
     with tab_acesso_rapido:
-        reservas_df = st.session_state.get("reservas_df")
-        if reservas_df is not None and not reservas_df.empty:
-            render_quick_access_tab(st.session_state["reservas_editor_df"], suggested_times)
-        else:
-            st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
-
+        render_quick_access_tab(st.session_state["reservas_editor_df"], suggested_times)
 
     with tab_reservas:
-        reservas_df = st.session_state.get("reservas_df")
-        if reservas_df is not None and not reservas_df.empty:
-            render_reservas_editor(suggested_times)
-        else:
-            st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
+        render_reservas_editor(suggested_times)
 
 
     with tab_notas:
@@ -2460,6 +2451,7 @@ if not df_final.empty:
                     st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
                 else:
                     st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
+else:
     with tab_pa:
         st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
     with tab_notas:
