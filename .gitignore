@@ -4,5 +4,9 @@ __pycache__/
 .vscode/
 reservas.json
 quartos_disponiveis.json
+notas_gerais.json
+saidas_checklist.json
+*.backup.json
 .env
 .streamlit/secrets.toml
+.DS_Store
