@@ -2451,10 +2451,24 @@ if not df_final.empty:
                     st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
                 else:
                     st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
-else:
-    with tab_pa:
-        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
-    with tab_notas:
-        st.info("Sem dados ainda. Importa ficheiros no separador 'Importar' para começar.")
-    with tab_guardar:
-        st.info("Sem dados para guardar/limpar neste momento.")
+
+# Separador Limpar sempre visível
+with tab_guardar:
+    st.header("Limpar dados da aplicação")
+    st.warning("⚠️ Esta ação apaga todos os dados: reservas, quartos disponíveis, notas gerais, checklist de saídas e estado de sessão. Não pode ser desfeita.")
+    if st.button("🧹 Limpar TUDO", type="primary"):
+        # Limpa reservas
+        st.session_state["reservas_df"] = pd.DataFrame()
+        st.session_state["reservas_editor_df"] = pd.DataFrame()
+        st.session_state["current_df"] = pd.DataFrame()
+        # Limpa quartos disponíveis
+        st.session_state["quartos_disponiveis"] = []
+        # Limpa notas gerais
+        st.session_state["notas_gerais_pa"] = ""
+        st.session_state.pop("notas_gerais_pa_editor", None)
+        # Limpa checklist de saídas (dict e chaves de widget)
+        st.session_state["saidas_checklist"] = {}
+        for k in list(st.session_state.keys()):
+            if k.startswith("saida_") or k.startswith("marcar_todos_flag_"):
+                del st.session_state[k]
+        st.rerun()
