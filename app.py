@@ -1675,60 +1675,109 @@ with tab_saidas:
         return str(txt).strip().lower().replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
 
     def tem_saida_sugerida(alojamento, quarto):
-        if reservas_df is None or reservas_df.empty:
+        df = st.session_state.get("reservas_editor_df")
+        if df is None or df.empty:
+            df = st.session_state.get("reservas_df")
+        if df is None or df.empty:
             return False
-        aloj_norm = norm(alojamento.split(" - ")[0])
+
         quarto_norm = norm(quarto)
-        # Casa completa: PIPO ou ESCAPE e unidade contém "two bedroom house"
-        if aloj_norm in ["pipo", "escape"]:
-            for _, row in reservas_df.iterrows():
-                try:
-                    checkin = pd.to_datetime(row["Check-in"]).date() if not pd.isna(row["Check-in"]) else None
-                    checkout = pd.to_datetime(row["Check-out"]).date() if not pd.isna(row["Check-out"]) else None
-                    unidade = norm(str(row["Unidade"]))
-                    if checkin == ontem and checkout == hoje and "two bedroom house" in unidade:
-                        return True
-                except Exception:
-                    continue
-        # Matching flexível para quartos/camas
-        # Extrai número do quarto/cama
-        def extrai_numero(txt):
-            m = re.search(r"(\d+)", txt)
-            return m.group(1) if m else None
-        quarto_num = extrai_numero(quarto_norm)
-        is_cama = "cama" in quarto_norm or re.match(r"c\d", quarto_norm)
-        is_quarto = "quarto" in quarto_norm or "room" in quarto_norm or re.match(r"q\d", quarto_norm)
-        # Dormitório: se todas as camas do quarto 4 estiverem ocupadas, marca o quarto 4
-        if aloj_norm == "abh" and "quarto 4" in quarto_norm and not is_cama:
-            camas_ocupadas = set()
-            for _, row in reservas_df.iterrows():
-                try:
-                    checkin = pd.to_datetime(row["Check-in"]).date() if not pd.isna(row["Check-in"]) else None
-                    checkout = pd.to_datetime(row["Check-out"]).date() if not pd.isna(row["Check-out"]) else None
-                    unidade = norm(str(row["Unidade"]))
-                    if checkin == ontem and checkout == hoje and ("cama" in unidade or re.match(r"c\d", unidade)):
-                        camas_ocupadas.add(extrai_numero(unidade))
-                except Exception:
-                    continue
-            if len(camas_ocupadas) == 4:
-                return True
-        # Matching normal para quartos/camas
-        for _, row in reservas_df.iterrows():
+        # Alojamento base: "FOZ - Apartamento A" → "foz"
+        aloj_checklist = norm(alojamento.split(" - ")[0])
+
+        # Detecta se é uma cama (ex: "Quarto 4 - Cama 1") e extrai o número correcto
+        is_cama = "cama" in quarto_norm
+        if is_cama:
+            m_cama = re.search(r"cama\s*(\d+)", quarto_norm)
+            item_num = m_cama.group(1) if m_cama else None
+        else:
+            m_quarto = re.search(r"(\d+)", quarto_norm)
+            item_num = m_quarto.group(1) if m_quarto else None
+
+        def tipo_e_num_unidade(txt):
+            """Classifica a unidade da reserva e extrai o número identificador.
+            Retorna ('casa', None) | ('cama', str) | ('quarto', str) | ('ambiguo', str) | (None, None)
+
+            Exemplos:
+              'quarto duplo nº1 casa de banho privada' → ('quarto', '1')
+              'quarto twin nº5 beliche com casa de banho privada' → ('quarto', '5')
+              'double room no. 3 private bathroom' → ('quarto', '3')
+              'cama 2' / 'bed 2' / 'bunk 2' → ('cama', '2')
+              'two bedroom house' / 'casa inteira' → ('casa', None)
+              'quarto 1' / 'room 1' → ('quarto', '1')
+              '1' / 'q1' → ('ambiguo', '1')
+            """
+            # Propriedade inteira
+            palavras_casa = ["two bedroom", "house", "entire", "completo", "inteiro",
+                             "casa inteira", "apartamento inteiro", "whole"]
+            if any(p in txt for p in palavras_casa):
+                return ('casa', None)
+
+            # Detecta tipo pela presença de palavras-chave
+            is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', txt, re.IGNORECASE))
+            is_quarto_u = bool(re.search(
+                r'\b(?:quarto|room|suite|double|twin|single|triple|duplo|individual|triplo|quadruplo)\b',
+                txt, re.IGNORECASE
+            ))
+
+            # Extrai número: nº/no./nr. têm prioridade, depois palavra+número, depois standalone
+            num = None
+            m = re.search(r'\bn[ro]?[º°]?\.?\s*(\d+)\b', txt, re.IGNORECASE)
+            if m:
+                num = m.group(1)
+            else:
+                m = re.search(
+                    r'\b(?:cama|bed|bunk|room|quarto|suite)\s+(\d+)\b',
+                    txt, re.IGNORECASE
+                )
+                if m:
+                    num = m.group(1)
+                else:
+                    m = re.fullmatch(r'[a-z]?(\d+)', txt.strip())
+                    if m:
+                        num = m.group(1)
+
+            if is_cama_u:
+                return ('cama', num)
+            if is_quarto_u:
+                return ('quarto', num)
+            if num:
+                return ('ambiguo', num)
+            return (None, None)
+
+        for _, row in df.iterrows():
             try:
-                checkin = pd.to_datetime(row["Check-in"]).date() if not pd.isna(row["Check-in"]) else None
-                checkout = pd.to_datetime(row["Check-out"]).date() if not pd.isna(row["Check-out"]) else None
-                unidade = norm(str(row["Unidade"]))
-                aloj_row = norm(str(row["Alojamento"]))
-                if checkin == ontem and checkout == hoje and aloj_norm in aloj_row:
-                    # Matching flexível: aceita variações
-                    if is_cama:
-                        # Cama: aceita "cama 1", "c1", etc.
-                        if quarto_num and (f"cama {quarto_num}" in unidade or f"c{quarto_num}" in unidade):
-                            return True
-                    elif is_quarto:
-                        # Quarto: aceita "quarto 1", "room 1", "q1", "1"
-                        if quarto_num and (f"quarto {quarto_num}" in unidade or f"room {quarto_num}" in unidade or f"q{quarto_num}" in unidade or unidade == quarto_num):
-                            return True
+                checkin = pd.to_datetime(row["Check-in"]).date() if pd.notna(row.get("Check-in")) else None
+                checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
+                if checkout != hoje or checkin is None:
+                    continue
+                if (checkout - checkin).days != 1:
+                    continue
+
+                aloj_row = norm(str(row.get("Alojamento", "")))
+                if aloj_checklist not in aloj_row and aloj_row not in aloj_checklist:
+                    continue
+
+                unidade = norm(str(row.get("Unidade", "")))
+
+                # Unidade vazia ou igual ao nome do alojamento = propriedade inteira
+                if not unidade or unidade == aloj_checklist:
+                    return True
+
+                tipo_u, num_u = tipo_e_num_unidade(unidade)
+
+                # Propriedade inteira: marca todos os quartos e camas
+                if tipo_u == 'casa':
+                    return True
+
+                if is_cama and item_num:
+                    # Item do checklist é uma cama: só faz match se a unidade for cama (ou ambígua)
+                    if tipo_u in ('cama', 'ambiguo') and num_u == item_num:
+                        return True
+                elif item_num:
+                    # Item do checklist é um quarto: só faz match se a unidade for quarto (ou ambígua)
+                    if tipo_u in ('quarto', 'ambiguo') and num_u == item_num:
+                        return True
             except Exception:
                 continue
         return False
@@ -1788,11 +1837,15 @@ with tab_saidas:
                     f"</div>", unsafe_allow_html=True)
         col1, col2 = st.columns([1, 5])
         # Inicializa o estado ANTES do botão
+        # Se a sugestão for True, aplica sempre (reserva detetada); se False, só inicializa se ainda não existir
         for quarto in quartos:
             key = f"saida_{alojamento}_{quarto}"
             sugerida = tem_saida_sugerida(alojamento, quarto)
-            if key not in st.session_state["saidas_checklist"]:
-                st.session_state["saidas_checklist"][key] = sugerida
+            if sugerida:
+                st.session_state["saidas_checklist"][key] = True
+                st.session_state[key] = True
+            elif key not in st.session_state["saidas_checklist"]:
+                st.session_state["saidas_checklist"][key] = False
 
         # Se a flag de marcar todos deste alojamento estiver ativa, marca todos e limpa a flag
         marcar_flag = f"marcar_todos_flag_{alojamento}"
