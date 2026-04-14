@@ -2726,6 +2726,11 @@ with tab_importar:
                 for f in [RESERVAS_FILE, QUARTOS_FILE, NOTAS_GERAIS_FILE, SAIDAS_FILE]:
                     if f.exists():
                         f.unlink()
+                if USE_SUPABASE and _supabase_client:
+                    try:
+                        _supabase_client.table("reservas").delete().eq("id", 1).execute()
+                    except Exception:
+                        pass
                 st.rerun()
         with col_nao:
             if st.button("Cancelar", key="limpar_cancelar_btn"):
