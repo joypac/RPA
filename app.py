@@ -460,8 +460,22 @@ def save_notas_gerais(texto):
     _atomic_write_json(NOTAS_GERAIS_FILE, payload)
 
 
-def load_saidas_checklist():
-    """Carrega checklist guardada. Se for de outro dia, devolve {} (recomeça do zero)."""
+def data_referencia_checklist(df=None):
+    """Devolve a data de referência da checklist: a data de check-in mais frequente
+    nos dados carregados. Se não houver dados, usa a data de hoje."""
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        return date.today().isoformat()
+    try:
+        checkins = pd.to_datetime(df["Check-in"], errors="coerce").dropna()
+        if checkins.empty:
+            return date.today().isoformat()
+        return checkins.dt.date.mode()[0].isoformat()
+    except Exception:
+        return date.today().isoformat()
+
+
+def load_saidas_checklist(df=None):
+    """Carrega checklist guardada. Se for de outro período de trabalho, devolve {}."""
     if not SAIDAS_FILE.exists():
         return {}
     try:
@@ -469,9 +483,8 @@ def load_saidas_checklist():
             data = json.load(f)
         if isinstance(data, dict):
             saved_date = data.get("_date")
-            today_str = date.today().isoformat()
-            if saved_date != today_str:
-                # Novo dia — checklist fresca
+            ref_date = data_referencia_checklist(df)
+            if saved_date != ref_date:
                 return {}
             return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
     except Exception:
@@ -479,9 +492,9 @@ def load_saidas_checklist():
     return {}
 
 
-def save_saidas_checklist(checklist: dict):
+def save_saidas_checklist(checklist: dict, df=None):
     payload = {k: bool(v) for k, v in checklist.items() if not k.startswith("_")}
-    payload["_date"] = date.today().isoformat()
+    payload["_date"] = data_referencia_checklist(df)
     _atomic_write_json(SAIDAS_FILE, payload)
 
 
@@ -503,7 +516,7 @@ def refresh_data_from_storage():
     st.session_state["quartos_disponiveis"] = load_quartos()
     st.session_state["notas_gerais_pa"] = load_notas_gerais()
     st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
-    st.session_state["saidas_checklist"] = load_saidas_checklist()
+    st.session_state["saidas_checklist"] = load_saidas_checklist(refreshed_reservas)
 
 
 def get_last_saved_text():
@@ -2003,7 +2016,8 @@ with tab_saidas:
 
     # Estado das checkboxes — carregado do ficheiro em refresh_data_from_storage; garante existência
     if "saidas_checklist" not in st.session_state:
-        st.session_state["saidas_checklist"] = load_saidas_checklist()
+        _df_for_checklist = st.session_state.get("reservas_editor_df") or st.session_state.get("reservas_df")
+        st.session_state["saidas_checklist"] = load_saidas_checklist(_df_for_checklist)
 
     # Renderização da checklist
     # Cores dos alojamentos (igual ao acesso rápido)
@@ -2106,10 +2120,10 @@ with tab_saidas:
                 else:
                     st.session_state["saidas_checklist"][key] = new_val
             if changed:
-                save_saidas_checklist(st.session_state["saidas_checklist"])
+                save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
 
     # Auto-save a cada render
-    save_saidas_checklist(st.session_state["saidas_checklist"])
+    save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
     st.divider()
     st.caption(f" Guardado automaticamente — {datetime.now().strftime('%H:%M')}")
 
