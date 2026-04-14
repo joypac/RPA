@@ -1844,8 +1844,6 @@ with tab_saidas:
                 checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
                 if checkout != hoje or checkin is None:
                     continue
-                if (checkout - checkin).days != 1:
-                    continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
                 if aloj_checklist not in aloj_row and aloj_row not in aloj_checklist:
@@ -1902,9 +1900,6 @@ with tab_saidas:
                     continue
                 # Hóspede está cá hoje mas não sai hoje
                 if not (checkin <= hoje < checkout):
-                    continue
-                # Exclui saídas de 1 noite já tratadas por tem_saida_sugerida
-                if checkin == ontem and checkout == hoje:
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
