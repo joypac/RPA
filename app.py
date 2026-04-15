@@ -922,14 +922,34 @@ def extract_room_tag(unidade_value):
 
 def format_nome_com_quarto(nome_value, unidade_value):
     nome = "" if pd.isna(nome_value) else str(nome_value).strip()
-    # Mostra todos os quartos/unidades associados
     unidades = parse_unidade_labels(unidade_value)
-    if nome and unidades:
-        return f"{nome} (" + ", ".join([
-            format_quartos_text(u) for u in unidades
-        ]) + ")"
-    if unidades:
-        return ", ".join([format_quartos_text(u) for u in unidades])
+    # Se for casa completa, mostrar 'TODO'
+    def is_casa_completa(u):
+        casa_terms = [
+            "two bedroom", "three bedroom", "four bedroom", "house", "entire", "completo", "inteiro",
+            "casa inteira", "apartamento inteiro", "whole"
+        ]
+        return any(term in str(u).lower() for term in casa_terms)
+
+    if unidades and any(is_casa_completa(u) for u in unidades):
+        quartos_str = "TODO"
+    elif unidades:
+        # Só códigos curtos, sem duplicados
+        codigos = []
+        seen = set()
+        for u in unidades:
+            tag = format_quartos_text(u)
+            if tag and tag not in seen and tag != "Sem unidade definida":
+                seen.add(tag)
+                codigos.append(tag)
+        quartos_str = ", ".join(codigos)
+    else:
+        quartos_str = ""
+
+    if nome and quartos_str:
+        return f"{nome} ({quartos_str})"
+    if quartos_str:
+        return quartos_str
     return nome
 
 
