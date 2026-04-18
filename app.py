@@ -1781,15 +1781,15 @@ with tab_saidas:
     # --- Carregar dados de reservas para sugerir saídas ---
 
     reservas_df = st.session_state.get("reservas_df")
-    # Data de referência: check-in mais frequente nos dados inseridos, ou hoje se não houver dados
+    # Data de referência: checkout mais frequente nos dados inseridos, ou hoje se não houver dados
     def data_referencia_checklist(df=None):
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             return date.today()
         try:
-            checkins = pd.to_datetime(df["Check-in"], errors="coerce").dropna()
-            if checkins.empty:
+            checkouts = pd.to_datetime(df["Check-out"], errors="coerce").dropna()
+            if checkouts.empty:
                 return date.today()
-            return checkins.dt.date.mode()[0]
+            return checkouts.dt.date.mode()[0]
         except Exception:
             return date.today()
 
@@ -1891,7 +1891,7 @@ with tab_saidas:
             try:
                 checkin = pd.to_datetime(row["Check-in"]).date() if pd.notna(row.get("Check-in")) else None
                 checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
-                if checkout not in (hoje, amanha) or checkin is None:
+                if checkout != hoje or checkin is None:
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
