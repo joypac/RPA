@@ -1867,15 +1867,20 @@ with tab_saidas:
                     if m:
                         num = m.group(1)
                     else:
-                        m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
+                        # Último número na string: "Quarto Twin 1", "Double Room 2"
+                        m = re.search(r'(\d+)\s*$', txt)
                         if m:
-                            prefix = m.group(1).lower()
-                            num = m.group(2)
-                            # Prefixo Q = quarto, C = cama (abreviaturas do unidade_curta)
-                            if prefix == 'q':
-                                return ('quarto', num)
-                            if prefix == 'c':
-                                return ('cama', num)
+                            num = m.group(1)
+                        else:
+                            m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
+                            if m:
+                                prefix = m.group(1).lower()
+                                num = m.group(2)
+                                # Prefixo Q = quarto, C = cama (abreviaturas do unidade_curta)
+                                if prefix == 'q':
+                                    return ('quarto', num)
+                                if prefix == 'c':
+                                    return ('cama', num)
 
             # Quarto tem prioridade sobre cama quando ambos os termos estão presentes
             # (ex: "Quarto Twin nº5 beliche" é um quarto com beliches, não uma cama)
