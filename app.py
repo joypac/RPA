@@ -1891,7 +1891,7 @@ with tab_saidas:
             try:
                 checkin = pd.to_datetime(row["Check-in"]).date() if pd.notna(row.get("Check-in")) else None
                 checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
-                if checkout != hoje or checkin is None:
+                if checkout not in (hoje, amanha) or checkin is None:
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
