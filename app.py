@@ -35,7 +35,6 @@ def require_password():
             st.session_state["is_authenticated"] = True
             st.rerun()
         else:
-            st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
             st.error("Palavra-passe incorreta.")
 
     st.stop()
@@ -2681,9 +2680,6 @@ if not df_final.empty:
 
     df_pa = edited_df.copy()
     df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
-    if df_pa.empty:
-        st.info("Nenhuma reserva com hora de pequeno-almoço definida ainda.")
-
     with tab_pa:
         reservas_df = st.session_state.get("reservas_df")
         if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
