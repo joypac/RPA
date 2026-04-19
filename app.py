@@ -1923,7 +1923,7 @@ with tab_saidas:
                         if tipo_u in ('cama', 'ambiguo') and num_u == item_num:
                             return True
                     elif item_num:
-                        if tipo_u in ('quarto', 'ambiguo') and num_u == item_num:
+                        if tipo_u in ('quarto', 'ambiguo') and (num_u == item_num or num_u is None):
                             return True
             except Exception:
                 continue
@@ -2504,6 +2504,7 @@ if import_submit and all_data:
     df_final = normalize_pessoas_column(df_final)
     st.session_state["reservas_df"] = df_final
     save_reservas(df_final)
+    st.session_state["saidas_checklist"] = load_saidas_checklist(df_final)
     _import_conflicts = detect_conflicts(df_final)
     if _import_conflicts:
         st.warning(f"**{len(_import_conflicts)} conflito(s) detectado(s) após importação:**")
