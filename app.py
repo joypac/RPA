@@ -1189,6 +1189,7 @@ def render_quick_access_tab(df, suggested_times):
                                 st.session_state["reservas_df"] = _merged
                                 st.session_state["reservas_editor_df"] = _merged
                                 save_reservas(_merged)
+                                st.session_state["saidas_checklist"] = load_saidas_checklist(_merged)
                                 st.session_state["quartos_disponiveis"].pop(_qi)
                                 save_quartos(st.session_state["quartos_disponiveis"])
                                 st.session_state["quick_inserir_quarto_idx"] = None
@@ -1418,6 +1419,7 @@ def _render_reservas_editor_impl(suggested_times):
         st.session_state["reservas_editor_df"] = updated_df.copy()
         st.session_state["reservas_df"] = updated_df.copy()
         save_reservas(updated_df)
+        st.session_state["saidas_checklist"] = load_saidas_checklist(updated_df)
         editor_df = updated_df
 
     st.divider()
@@ -1532,6 +1534,7 @@ def _render_reservas_editor_impl(suggested_times):
         st.session_state["reservas_editor_df"] = editor_df.copy()
         st.session_state["reservas_df"] = editor_df.copy()
         save_reservas(editor_df)
+        st.session_state["saidas_checklist"] = load_saidas_checklist(editor_df)
         st.success("Reserva atualizada.")
         st.rerun()
 
@@ -1553,6 +1556,7 @@ def _render_reservas_editor_impl(suggested_times):
                 st.session_state["reservas_editor_df"] = updated_df.copy()
                 st.session_state["reservas_df"] = updated_df.copy()
                 save_reservas(updated_df)
+                st.session_state["saidas_checklist"] = load_saidas_checklist(updated_df)
                 st.session_state["delete_reserva_confirm_idx"] = None
                 st.success("Reserva eliminada com sucesso.")
                 st.rerun()
@@ -1671,6 +1675,7 @@ def _render_reservas_editor_impl(suggested_times):
                     st.session_state["reservas_editor_df"] = editor_df.copy()
                     st.session_state["reservas_df"] = editor_df.copy()
                     save_reservas(editor_df)
+                    st.session_state["saidas_checklist"] = load_saidas_checklist(editor_df)
                     st.success("Reserva editada com sucesso.")
                     st.rerun()
 
@@ -1977,12 +1982,13 @@ with tab_saidas:
                     if m: return m.group(1)
                     m = re.search(r'\b(?:cama|bed|bunk|room|quarto|suite)\s+(\d+)\b', txt, re.IGNORECASE)
                     if m: return m.group(1)
+                    m = re.search(r'-\s*(\d+)\s*$', txt)
+                    if m: return m.group(1)
+                    m = re.search(r'(\d+)\s*$', txt)
+                    if m: return m.group(1)
                     m = re.fullmatch(r'([a-z]?)(\d+)', txt.strip())
                     if m:
-                        prefix = m.group(1).lower()
-                        num = m.group(2)
-                        # Q = quarto, C = cama — devolve só o número
-                        return num
+                        return m.group(2)
                     return None
 
                 # Suporta unidades múltiplas separadas por vírgula
@@ -1997,10 +2003,10 @@ with tab_saidas:
                         unidade, re.IGNORECASE)) or _pref_letter == 'q'
 
                     if is_cama and item_num:
-                        if (is_cama_u or not is_quarto_u) and num_u == item_num:
+                        if (is_cama_u or not is_quarto_u) and (num_u == item_num or num_u is None):
                             return True
                     elif item_num:
-                        if (is_quarto_u or not is_cama_u) and num_u == item_num:
+                        if (is_quarto_u or not is_cama_u) and (num_u == item_num or num_u is None):
                             return True
             except Exception:
                 continue
@@ -2341,6 +2347,7 @@ with tab_inserir:
                 st.session_state["reservas_df"] = _merged_df
                 st.session_state["reservas_editor_df"] = _merged_df
                 save_reservas(_merged_df)
+                st.session_state["saidas_checklist"] = load_saidas_checklist(_merged_df)
                 st.success("Reserva direta adicionada com sucesso.")
                 st.rerun()
 
