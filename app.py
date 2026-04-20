@@ -168,6 +168,7 @@ RESERVAS_FILE = APP_DIR / "reservas.json"
 QUARTOS_FILE = APP_DIR / "quartos_disponiveis.json"
 NOTAS_GERAIS_FILE = APP_DIR / "notas_gerais.json"
 SAIDAS_FILE = APP_DIR / "saidas_checklist.json"
+TRANSFERS_FILE = APP_DIR / "transfers.json"
 RESERVA_KEY_COLS = ["Nome", "Check-in", "Check-out", "Pessoas", "Unidade", "Alojamento"]
 IMPORT_MATCH_COLS = ["Nome", "Check-in", "Alojamento"]
 IMPORT_UPDATE_COLS = ["Check-out", "Pessoas", "Unidade"]
@@ -459,6 +460,39 @@ def save_notas_gerais(texto):
     _atomic_write_json(NOTAS_GERAIS_FILE, payload)
 
 
+def load_transfers():
+    if USE_SUPABASE:
+        try:
+            resp = _supabase_client.table("reservas").select("data").eq("id", 2).execute()
+            if resp.data:
+                data = resp.data[0]["data"]
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    return data.get("transfers", [])
+        except Exception:
+            pass
+        return []
+    if TRANSFERS_FILE.exists():
+        try:
+            with TRANSFERS_FILE.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, list) else []
+        except Exception:
+            pass
+    return []
+
+
+def save_transfers(transfers):
+    if USE_SUPABASE:
+        try:
+            _supabase_client.table("reservas").upsert({"id": 2, "data": transfers}).execute()
+        except Exception as e:
+            show_pink_alert(f"Erro ao guardar transfers: {e}")
+        return
+    _atomic_write_json(TRANSFERS_FILE, transfers)
+
+
 def data_referencia_checklist(df=None):
     """Devolve a data de referência da checklist: a data de check-in mais frequente
     nos dados carregados. Se não houver dados, usa a data de hoje."""
@@ -519,6 +553,7 @@ def refresh_data_from_storage():
     st.session_state["notas_gerais_pa"] = load_notas_gerais()
     st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
     st.session_state["saidas_checklist"] = load_saidas_checklist(refreshed_reservas)
+    st.session_state["transfers"] = load_transfers()
 
 
 def get_last_saved_text():
@@ -1718,6 +1753,8 @@ if "notas_gerais_pa" not in st.session_state:
     st.session_state["notas_gerais_pa"] = load_notas_gerais()
 if "notas_gerais_pa_editor" not in st.session_state:
     st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
+if "transfers" not in st.session_state:
+    st.session_state["transfers"] = load_transfers()
 
 header_c1, header_c2 = st.columns([4, 1.2])
 with header_c1:
@@ -2563,27 +2600,10 @@ if not df_final.empty:
             df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
         else:
             df_pa = pd.DataFrame()
-        st.subheader(" Notas gerais")
-        st.caption("Estas notas entram no fim do texto exportado de pequenos-almoços e não substituem as notas de cada reserva.")
-        st.text_area(
-            "Notas para exportação",
-            key="notas_gerais_pa_editor",
-            placeholder="Ex.: Avisar cozinha sobre alergias gerais do dia...",
-            height=180,
-        )
-        if st.button("Guardar notas", key="save_notas_gerais_btn", type="primary"):
-            notas_limpas = str(st.session_state.get("notas_gerais_pa_editor", "")).strip()
-            st.session_state["notas_gerais_pa"] = notas_limpas
-            save_notas_gerais(notas_limpas)
-            st.success("Notas gerais guardadas.")
-
-        # --- Lista Pequenos-Almoços (movida do tab_pa) ---
-        st.divider()
-        st.subheader(" Exportar lista")
 
         def unidade_curta(valor_unidade):
             import re
-            if pd.isna(valor_unidade):
+            if pd.isna(valor_unidade) or not str(valor_unidade).strip():
                 return ""
             partes = [p.strip() for p in str(valor_unidade).split(",") if p.strip()]
             resultado = []
@@ -2599,15 +2619,83 @@ if not df_final.empty:
                 resultado.append(parte)
             return ", ".join(resultado)
 
+        st.subheader(" Notas gerais")
+        st.caption("Estas notas entram no fim do texto exportado de pequenos-almoços e não substituem as notas de cada reserva.")
+        st.text_area(
+            "Notas para exportação",
+            key="notas_gerais_pa_editor",
+            placeholder="Ex.: Avisar cozinha sobre alergias gerais do dia...",
+            height=180,
+        )
+        if st.button("Guardar notas", key="save_notas_gerais_btn", type="primary"):
+            notas_limpas = str(st.session_state.get("notas_gerais_pa_editor", "")).strip()
+            st.session_state["notas_gerais_pa"] = notas_limpas
+            save_notas_gerais(notas_limpas)
+            st.success("Notas gerais guardadas.")
 
-        def gerar_lista(df_pa, saidas_checklist=None, checklist_structure=None, bold_asterisk=False):
+        # --- Transfers ---
+        st.divider()
+        st.subheader("Transfers")
+        transfers = st.session_state.get("transfers", [])
+
+        if transfers:
+            for i, t in enumerate(transfers):
+                col_t, col_del = st.columns([5, 1])
+                with col_t:
+                    label = f"**{t['nome']}** — {t['alojamento']}"
+                    if t.get("unidade"):
+                        label += f" ({unidade_curta(t['unidade'])})"
+                    st.markdown(f"{label}  \n{t['texto']}")
+                with col_del:
+                    if st.button("Remover", key=f"remove_transfer_{i}"):
+                        transfers.pop(i)
+                        st.session_state["transfers"] = transfers
+                        save_transfers(transfers)
+                        st.rerun()
+            st.divider()
+
+        reservas_para_transfer = st.session_state.get("reservas_editor_df", pd.DataFrame())
+        if not reservas_para_transfer.empty:
+            opcoes_transfer = [""] + [
+                f"{r['Nome']} — {r['Alojamento']}" + (f" ({unidade_curta(r.get('Unidade',''))})" if r.get('Unidade') else "") + f"  [{pd.to_datetime(r.get('Check-in'), errors='coerce').strftime('%d/%m') if pd.notna(pd.to_datetime(r.get('Check-in'), errors='coerce')) else ''}]"
+                for _, r in reservas_para_transfer.iterrows()
+            ]
+            with st.form("form_add_transfer", clear_on_submit=True):
+                sel = st.selectbox("Reserva", opcoes_transfer, key="transfer_sel_reserva")
+                texto_transfer = st.text_area("Informação do transfer", key="transfer_texto", placeholder="Ex.: Transfer para aeroporto às 10h00")
+                if st.form_submit_button("Adicionar transfer", type="primary"):
+                    if sel and texto_transfer.strip():
+                        idx = opcoes_transfer.index(sel) - 1
+                        row = reservas_para_transfer.iloc[idx]
+                        novo = {
+                            "nome": row["Nome"],
+                            "alojamento": row["Alojamento"],
+                            "unidade": str(row.get("Unidade", "") or ""),
+                            "checkin": str(row.get("Check-in", "") or ""),
+                            "texto": texto_transfer.strip(),
+                        }
+                        transfers.append(novo)
+                        st.session_state["transfers"] = transfers
+                        save_transfers(transfers)
+                        st.rerun()
+        else:
+            st.caption("Importa reservas para poder associar transfers.")
+
+        # --- Lista Pequenos-Almoços (movida do tab_pa) ---
+        st.divider()
+        st.subheader(" Exportar lista")
+
+        def gerar_lista(df_pa, saidas_checklist=None, checklist_structure=None, bold_asterisk=False, transfers=None):
+            def bold(x):
+                return f"*{x}*" if bold_asterisk else f"**{x}**"
             def nota_valida(v):
                 return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
-            linhas = [f"{'*Pequenos-Almoços*' if bold_asterisk else 'Pequenos-Almoços'}\n"]
+
+            # --- Pequenos-Almoços ---
+            linhas = [f"{bold('Pequenos-Almoços')}\n"]
             for hora in sorted(df_pa["Hora PA"].unique()):
                 grupo = df_pa[df_pa["Hora PA"] == hora]
-                hora_fmt = f"*{hora}h*" if bold_asterisk else f"{hora}h"
-                linhas.append(hora_fmt)
+                linhas.append(f"{bold(f'{hora}h')}")
                 for _, r in grupo.iterrows():
                     nome = r["Nome"]
                     aloj = r["Alojamento"]
@@ -2622,55 +2710,62 @@ if not df_final.empty:
                         tags.append("pago")
                     if nota_texto:
                         tags.append(nota_texto)
-                    sufixo = f" (*{'; '.join(tags)}*)" if tags else ""
+                    sufixo = f" ({'; '.join(tags)})" if tags else ""
                     linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
                 linhas.append("")
             total_pax = total_pessoas_col(df_pa)
-            total_fmt = f"*Total de pessoas: {total_pax}*" if bold_asterisk else f"Total de pessoas: {total_pax}"
-            linhas.append(total_fmt)
+            linhas.append(bold(f"Total de pessoas: {total_pax}"))
 
-            # --- Secção Saídas ---
-            if checklist_structure and (saidas_checklist or any(tem_fica(aloj, q) for aloj, qs in checklist_structure for q in qs)):
-                bold = (lambda x: f"*{x}*" if bold_asterisk else f"**{x}**")
-                linhas.append("")
-                linhas.append(bold("Saídas"))
+            # --- Saídas ---
+            if checklist_structure:
+                linhas_saidas = []
                 for alojamento, quartos in checklist_structure:
                     quartos_checked = [q for q in quartos if saidas_checklist and saidas_checklist.get(f"saida_{alojamento}_{q}")]
                     quartos_fica = [q for q in quartos if tem_fica(alojamento, q)]
                     if not quartos_checked and not quartos_fica:
                         continue
-                    partes = []
-                    # Saídas marcadas
                     saidas_sem_fica = [q for q in quartos_checked if q not in quartos_fica]
+                    partes = []
                     if saidas_sem_fica:
                         if len(saidas_sem_fica) == len(quartos) - len(quartos_fica):
                             partes.append(bold("COMPLETO"))
                         else:
                             partes.append(", ".join(saidas_sem_fica))
-                    # Ficam
                     if quartos_fica:
-                        fica_txt = ", ".join(quartos_fica)
-                        partes.append(f"Fica: {fica_txt}")
-                    linhas.append(f"{bold(alojamento)}: {' | '.join(partes)}")
+                        partes.append(f"Fica: {', '.join(quartos_fica)}")
+                    linhas_saidas.append(f"{bold(alojamento)} {' | '.join(partes)}")
+                if linhas_saidas:
+                    linhas.append("")
+                    linhas.append(bold("Saídas"))
+                    linhas.extend(linhas_saidas)
+
+            # --- Transfers ---
+            transfers_lista = transfers or []
+            if transfers_lista:
+                linhas.append("")
+                linhas.append(bold("Transfers"))
+                for t in transfers_lista:
+                    unidade_t = unidade_curta(t.get("unidade", "")) if t.get("unidade") else ""
+                    ref = f"{t['nome']} — {t['alojamento']}" + (f" ({unidade_t})" if unidade_t else "")
+                    linhas.append(f"{ref}: {t['texto']}")
 
             # --- Notas ---
             notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
             if notas_gerais:
                 linhas.append("")
-                linhas.append(f"{'*Notas*' if bold_asterisk else 'Notas:'}")
+                linhas.append(bold("Notas"))
                 linhas.append(notas_gerais)
             return "\n".join(linhas)
 
 
-        def gerar_lista_md(df_pa, saidas_checklist=None, checklist_structure=None):
-            # Versão markdown (negrito com **)
-            return gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=False).replace("*", "**")
-
+        def gerar_lista_md(df_pa, saidas_checklist=None, checklist_structure=None, transfers=None):
+            return gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=False, transfers=transfers).replace("*", "**")
 
         # Obter dados do separador Saídas
         saidas_checklist = st.session_state.get("saidas_checklist", {})
         checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
-        lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True)
+        transfers_export = st.session_state.get("transfers", [])
+        lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True, transfers=transfers_export)
 
         if st.button("Gerar lista em texto", key="btn_gerar_lista_md_notas"):
             st.code(lista_texto, language=None)
@@ -2785,15 +2880,17 @@ with tab_importar:
                 st.session_state["notas_gerais_pa"] = ""
                 st.session_state.pop("notas_gerais_pa_editor", None)
                 st.session_state["saidas_checklist"] = {}
+                st.session_state["transfers"] = []
                 for k in list(st.session_state.keys()):
                     if k.startswith("saida_") or k.startswith("marcar_todos_flag_"):
                         del st.session_state[k]
-                for f in [RESERVAS_FILE, QUARTOS_FILE, NOTAS_GERAIS_FILE, SAIDAS_FILE]:
+                for f in [RESERVAS_FILE, QUARTOS_FILE, NOTAS_GERAIS_FILE, SAIDAS_FILE, TRANSFERS_FILE]:
                     if f.exists():
                         f.unlink()
                 if USE_SUPABASE and _supabase_client:
                     try:
                         _supabase_client.table("reservas").delete().eq("id", 1).execute()
+                        _supabase_client.table("reservas").delete().eq("id", 2).execute()
                     except Exception:
                         pass
                 st.rerun()
