@@ -2113,7 +2113,7 @@ with tab_saidas:
                 st.session_state[key] = True
             elif key not in st.session_state["saidas_checklist"]:
                 st.session_state["saidas_checklist"][key] = False
-            # Se não há sugestão e a chave já existe, mantém o valor manual do utilizador
+                st.session_state[key] = False
 
         # Se a flag de marcar todos deste alojamento estiver ativa, marca todos e limpa a flag
         marcar_flag = f"marcar_todos_flag_{alojamento}"
@@ -2542,7 +2542,10 @@ if import_submit and all_data:
     df_final = normalize_pessoas_column(df_final)
     st.session_state["reservas_df"] = df_final
     save_reservas(df_final)
-    st.session_state["saidas_checklist"] = load_saidas_checklist(df_final)
+    # Reset completo após importação — limpa widget states para forçar re-detecção
+    for _k in [k for k in st.session_state if isinstance(k, str) and k.startswith("saida_")]:
+        del st.session_state[_k]
+    st.session_state["saidas_checklist"] = {}
     _import_conflicts = detect_conflicts(df_final)
     if _import_conflicts:
         st.warning(f"**{len(_import_conflicts)} conflito(s) detectado(s) após importação:**")
