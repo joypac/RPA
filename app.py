@@ -2734,9 +2734,10 @@ if not df_final.empty:
             linhas.append(bold(f"Total de pessoas: {total_pax}"))
 
             # --- Saídas ---
+            # saidas_checklist reflecte o estado actual das checkboxes (auto + manual)
+            # fica é calculado directamente dos dados para não depender de estado externo
             if checklist_structure:
                 df_res = df_reservas if df_reservas is not None else pd.DataFrame()
-                # Calcula data de referência directamente dos dados
                 ref_hoje = None
                 if not df_res.empty:
                     try:
@@ -2746,52 +2747,8 @@ if not df_final.empty:
                     except Exception:
                         pass
 
-                def _quarto_saida(alojamento, quarto, quartos_aloj):
-                    """True se o quarto tem saída hoje (dados ou checklist manual)."""
-                    # Manual override via checklist
-                    key = f"saida_{alojamento}_{quarto}"
-                    if saidas_checklist and saidas_checklist.get(key):
-                        return True
-                    # Detecção directa dos dados
-                    if df_res.empty or ref_hoje is None:
-                        return False
-                    q_norm = str(quarto).strip().lower()
-                    is_cama_q = "cama" in q_norm
-                    m_num = re.search(r'(\d+)', q_norm)
-                    item_num = m_num.group(1) if m_num else None
-                    aloj_norm = str(alojamento).split(" - ")[0].strip().lower()
-                    for _, row in df_res.iterrows():
-                        try:
-                            checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
-                            if checkout != ref_hoje:
-                                continue
-                            if str(row.get("Alojamento", "")).strip().lower() != aloj_norm:
-                                continue
-                            unidade_raw = str(row.get("Unidade", "") or "").strip().lower()
-                            if not unidade_raw or unidade_raw == aloj_norm:
-                                return True
-                            for parte in unidade_raw.split(","):
-                                parte = parte.strip()
-                                is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', parte, re.IGNORECASE))
-                                is_quarto_u = bool(re.search(r'\b(?:quarto|room|suite|double|twin|single|duplo)\b', parte, re.IGNORECASE))
-                                m_u = re.search(r'\bnr?[º°]?\.?\s*(\d+)\b', parte, re.IGNORECASE)
-                                if not m_u:
-                                    m_u = re.search(r'\b(?:cama|bed|bunk|room|quarto|suite)\s+(\d+)\b', parte, re.IGNORECASE)
-                                if not m_u:
-                                    m_u = re.search(r'(\d+)\s*$', parte)
-                                num_u = m_u.group(1) if m_u else None
-                                if is_cama_q:
-                                    if (is_cama_u or not is_quarto_u) and (num_u == item_num or num_u is None):
-                                        return True
-                                elif item_num:
-                                    if (is_quarto_u or not is_cama_u) and (num_u == item_num or num_u is None):
-                                        return True
-                        except Exception:
-                            continue
-                    return False
-
-                def _quarto_fica(alojamento, quarto):
-                    """True se há hóspede que fica (não sai hoje)."""
+                def _fica(alojamento, quarto):
+                    """True se há hóspede com estada que continua hoje."""
                     if df_res.empty or ref_hoje is None:
                         return False
                     aloj_norm = str(alojamento).split(" - ")[0].strip().lower()
@@ -2803,9 +2760,7 @@ if not df_final.empty:
                         try:
                             checkin = pd.to_datetime(row["Check-in"]).date() if pd.notna(row.get("Check-in")) else None
                             checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
-                            if checkin is None or checkout is None:
-                                continue
-                            if not (checkin <= ref_hoje < checkout):
+                            if not checkin or not checkout or not (checkin <= ref_hoje < checkout):
                                 continue
                             if str(row.get("Alojamento", "")).strip().lower() != aloj_norm:
                                 continue
@@ -2816,7 +2771,9 @@ if not df_final.empty:
                                 parte = parte.strip()
                                 is_cama_u = bool(re.search(r'\b(?:cama|bed|bunk|beliche)\b', parte, re.IGNORECASE))
                                 is_quarto_u = bool(re.search(r'\b(?:quarto|room|suite|double|twin|single|duplo)\b', parte, re.IGNORECASE))
-                                m_u = re.search(r'(\d+)\s*$', parte) or re.search(r'\b(?:cama|quarto|room)\s+(\d+)\b', parte, re.IGNORECASE)
+                                m_u = (re.search(r'\bnr?[º°]?\.?\s*(\d+)\b', parte, re.IGNORECASE) or
+                                       re.search(r'\b(?:cama|quarto|room)\s+(\d+)\b', parte, re.IGNORECASE) or
+                                       re.search(r'(\d+)\s*$', parte))
                                 num_u = m_u.group(1) if m_u else None
                                 if is_cama_q:
                                     if (is_cama_u or not is_quarto_u) and (num_u == item_num or num_u is None):
@@ -2830,11 +2787,11 @@ if not df_final.empty:
 
                 linhas_saidas = []
                 for alojamento, quartos in checklist_structure:
-                    quartos_saida = [q for q in quartos if _quarto_saida(alojamento, q, quartos)]
-                    quartos_fica = [q for q in quartos if _quarto_fica(alojamento, q)]
-                    if not quartos_saida and not quartos_fica:
+                    quartos_checked = [q for q in quartos if saidas_checklist and saidas_checklist.get(f"saida_{alojamento}_{q}")]
+                    quartos_fica = [q for q in quartos if _fica(alojamento, q)]
+                    if not quartos_checked and not quartos_fica:
                         continue
-                    saidas_sem_fica = [q for q in quartos_saida if q not in quartos_fica]
+                    saidas_sem_fica = [q for q in quartos_checked if q not in quartos_fica]
                     partes = []
                     if saidas_sem_fica:
                         if len(saidas_sem_fica) == len(quartos) - len(quartos_fica):
