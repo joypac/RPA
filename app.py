@@ -2151,15 +2151,10 @@ with tab_saidas:
                 if new_val != st.session_state["saidas_checklist"][key]:
                     st.session_state["saidas_checklist"][key] = new_val
                     changed = True
-                else:
-                    st.session_state["saidas_checklist"][key] = new_val
             if changed:
                 save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
 
-    # Auto-save a cada render
-    save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
     st.divider()
-    st.caption(f" Guardado automaticamente — {datetime.now().strftime('%H:%M')}")
 
 uploaded_files = []
 all_data = []
@@ -2637,21 +2632,43 @@ if not df_final.empty:
         st.divider()
         st.subheader("Transfers")
         transfers = st.session_state.get("transfers", [])
+        editing_idx = st.session_state.get("editing_transfer_idx", None)
 
         if transfers:
             for i, t in enumerate(transfers):
-                col_t, col_del = st.columns([5, 1])
-                with col_t:
-                    label = f"**{t['nome']}** — {t['alojamento']}"
-                    if t.get("unidade"):
-                        label += f" ({unidade_curta(t['unidade'])})"
-                    st.markdown(f"{label}  \n{t['texto']}")
-                with col_del:
-                    if st.button("Remover", key=f"remove_transfer_{i}"):
-                        transfers.pop(i)
-                        st.session_state["transfers"] = transfers
-                        save_transfers(transfers)
-                        st.rerun()
+                label = f"**{t['nome']}** — {t['alojamento']}"
+                if t.get("unidade"):
+                    label += f" ({unidade_curta(t['unidade'])})"
+                if editing_idx == i:
+                    st.markdown(label)
+                    novo_texto = st.text_area("Editar transfer", value=t["texto"], key=f"edit_transfer_texto_{i}")
+                    c1, c2 = st.columns([1, 1])
+                    with c1:
+                        if st.button("Guardar", key=f"save_transfer_{i}", type="primary"):
+                            transfers[i]["texto"] = novo_texto.strip()
+                            st.session_state["transfers"] = transfers
+                            st.session_state["editing_transfer_idx"] = None
+                            save_transfers(transfers)
+                            st.rerun()
+                    with c2:
+                        if st.button("Cancelar", key=f"cancel_transfer_{i}"):
+                            st.session_state["editing_transfer_idx"] = None
+                            st.rerun()
+                else:
+                    col_t, col_edit, col_del = st.columns([5, 1, 1])
+                    with col_t:
+                        st.markdown(f"{label}  \n{t['texto']}")
+                    with col_edit:
+                        if st.button("Editar", key=f"edit_transfer_{i}"):
+                            st.session_state["editing_transfer_idx"] = i
+                            st.rerun()
+                    with col_del:
+                        if st.button("Remover", key=f"remove_transfer_{i}"):
+                            transfers.pop(i)
+                            st.session_state["transfers"] = transfers
+                            st.session_state["editing_transfer_idx"] = None
+                            save_transfers(transfers)
+                            st.rerun()
             st.divider()
 
         reservas_para_transfer = st.session_state.get("reservas_editor_df", pd.DataFrame())
@@ -2761,13 +2778,11 @@ if not df_final.empty:
         def gerar_lista_md(df_pa, saidas_checklist=None, checklist_structure=None, transfers=None):
             return gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=False, transfers=transfers).replace("*", "**")
 
-        # Obter dados do separador Saídas
-        saidas_checklist = st.session_state.get("saidas_checklist", {})
-        checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
-        transfers_export = st.session_state.get("transfers", [])
-        lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True, transfers=transfers_export)
-
         if st.button("Gerar lista em texto", key="btn_gerar_lista_md_notas"):
+            saidas_checklist = st.session_state.get("saidas_checklist", {})
+            checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
+            transfers_export = st.session_state.get("transfers", [])
+            lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True, transfers=transfers_export)
             st.code(lista_texto, language=None)
 
 
