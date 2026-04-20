@@ -2833,7 +2833,8 @@ if not df_final.empty:
             saidas_checklist = st.session_state.get("saidas_checklist", {})
             checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
             transfers_export = st.session_state.get("transfers", [])
-            df_res_export = st.session_state.get("reservas_editor_df") or st.session_state.get("reservas_df")
+            _df1 = st.session_state.get("reservas_editor_df")
+            df_res_export = _df1 if (_df1 is not None and not _df1.empty) else st.session_state.get("reservas_df")
             lista_texto = gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=True, transfers=transfers_export, df_reservas=df_res_export)
             st.code(lista_texto, language=None)
 
