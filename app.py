@@ -2709,7 +2709,7 @@ if not df_final.empty:
                 return pd.notna(v) and str(v).strip() and str(v).strip().lower() not in {"none", "nan", "nat"}
 
             # --- Pequenos-Almoços ---
-            linhas = [f"{bold('Pequenos-Almoços')}\n"]
+            linhas = [bold('PEQUENOS-ALMOÇOS:')]
             for hora in sorted(df_pa["Hora PA"].unique()):
                 grupo = df_pa[df_pa["Hora PA"] == hora]
                 linhas.append(f"{bold(f'{hora}h')}")
@@ -2729,7 +2729,6 @@ if not df_final.empty:
                         tags.append(nota_texto)
                     sufixo = f" ({'; '.join(tags)})" if tags else ""
                     linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
-                linhas.append("")
             total_pax = total_pessoas_col(df_pa)
             linhas.append(bold(f"Total de pessoas: {total_pax}"))
 
@@ -2804,14 +2803,14 @@ if not df_final.empty:
                         linhas_saidas.append(f"{bold(alojamento)} {' | '.join(partes)}")
                 if linhas_saidas:
                     linhas.append("")
-                    linhas.append(bold("Saídas"))
+                    linhas.append(bold("SAÍDAS:"))
                     linhas.extend(linhas_saidas)
 
             # --- Transfers ---
             transfers_lista = transfers or []
             if transfers_lista:
                 linhas.append("")
-                linhas.append(bold("Transfers"))
+                linhas.append(bold("TRANSFERS:"))
                 for t in transfers_lista:
                     unidade_t = unidade_curta(t.get("unidade", "")) if t.get("unidade") else ""
                     ref = f"{t['nome']} — {t['alojamento']}" + (f" ({unidade_t})" if unidade_t else "")
@@ -2821,7 +2820,7 @@ if not df_final.empty:
             notas_gerais = str(st.session_state.get("notas_gerais_pa", "")).strip()
             if notas_gerais:
                 linhas.append("")
-                linhas.append(bold("Notas"))
+                linhas.append(bold("NOTAS:"))
                 linhas.append(notas_gerais)
             return "\n".join(linhas)
 
@@ -2830,8 +2829,13 @@ if not df_final.empty:
             return gerar_lista(df_pa, saidas_checklist, checklist_structure, bold_asterisk=False, transfers=transfers).replace("*", "**")
 
         if st.button("Gerar lista em texto", key="btn_gerar_lista_md_notas"):
-            saidas_checklist = st.session_state.get("saidas_checklist", {})
             checklist_structure = CHECKLIST_STRUCTURE if 'CHECKLIST_STRUCTURE' in locals() or 'CHECKLIST_STRUCTURE' in globals() else None
+            saidas_checklist = {}
+            if checklist_structure:
+                for _aloj, _qs in checklist_structure:
+                    for _q in _qs:
+                        _k = f"saida_{_aloj}_{_q}"
+                        saidas_checklist[_k] = bool(st.session_state.get(_k, False))
             transfers_export = st.session_state.get("transfers", [])
             _df1 = st.session_state.get("reservas_editor_df")
             df_res_export = _df1 if (_df1 is not None and not _df1.empty) else st.session_state.get("reservas_df")
