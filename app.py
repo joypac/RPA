@@ -2133,9 +2133,14 @@ with tab_saidas:
         for quarto in quartos:
             key = f"saida_{alojamento}_{quarto}"
             if key not in st.session_state:
-                sugerida = tem_saida_sugerida(alojamento, quarto)
-                st.session_state["saidas_checklist"][key] = bool(sugerida)
-                st.session_state[key] = bool(sugerida)
+                if key in st.session_state["saidas_checklist"]:
+                    # Restaura valor guardado (Supabase) sem auto-detectar
+                    st.session_state[key] = st.session_state["saidas_checklist"][key]
+                else:
+                    # Sem valor guardado — auto-detecta
+                    sugerida = tem_saida_sugerida(alojamento, quarto)
+                    st.session_state["saidas_checklist"][key] = bool(sugerida)
+                    st.session_state[key] = bool(sugerida)
             elif key not in st.session_state["saidas_checklist"]:
                 st.session_state["saidas_checklist"][key] = bool(st.session_state[key])
 
