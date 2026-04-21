@@ -2870,71 +2870,72 @@ if not df_final.empty:
             )
             st.warning(f"PA por confirmar hora: {nomes_sem_hora}")
         reservas_df = st.session_state.get("reservas_df")
-        if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
-            df_pa = df_pa.sort_values("Hora PA")
-            df_pa_resumo = df_pa.copy()
-            df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
-            resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
-            total_pa_dia = total_pessoas_col(df_pa)
+        if reservas_df is not None and not reservas_df.empty and (len(df_pa) > 0 or not df_pa_sem_hora.empty):
+            if len(df_pa) > 0:
+                df_pa = df_pa.sort_values("Hora PA")
+                df_pa_resumo = df_pa.copy()
+                df_pa_resumo["Pessoas"] = pd.to_numeric(df_pa_resumo["Pessoas"], errors="coerce").fillna(0)
+                resumo = df_pa_resumo.groupby("Hora PA")["Pessoas"].sum().reset_index()
+                total_pa_dia = total_pessoas_col(df_pa)
 
-            st.subheader(" Resumo por Hora")
-            for _, row in resumo.iterrows():
-                hora = row["Hora PA"]
-                total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
-                total = int(total_num) if pd.notna(total_num) else 0
-                if total >= 16:
-                    show_pink_alert(f"{hora} → {total} pessoas")
-                else:
-                    st.success(f"{hora} → {total} pessoas")
-                grupo = df_pa[df_pa["Hora PA"] == hora]
-                st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
+                st.subheader(" Resumo por Hora")
+                for _, row in resumo.iterrows():
+                    hora = row["Hora PA"]
+                    total_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                    total = int(total_num) if pd.notna(total_num) else 0
+                    if total >= 16:
+                        show_pink_alert(f"{hora} → {total} pessoas")
+                    else:
+                        st.success(f"{hora} → {total} pessoas")
+                    grupo = df_pa[df_pa["Hora PA"] == hora]
+                    st.dataframe(grupo[["Nome", "Alojamento", "Unidade", "Pessoas", "PA pago"]].fillna(""), width='stretch')
 
-            st.divider()
+                st.divider()
 
-            st.subheader(" Ocupação do Espaço (Pequeno-Almoço)")
+                st.subheader(" Ocupação do Espaço (Pequeno-Almoço)")
 
-            occupation_data = build_occupation_data(df_pa, suggested_times)
+                occupation_data = build_occupation_data(df_pa, suggested_times)
 
-            df_occupation = pd.DataFrame(occupation_data)
-            df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
-            df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
+                df_occupation = pd.DataFrame(occupation_data)
+                df_occupation["Verde (<16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] < 16, 0)
+                df_occupation["Vermelho (>=16)"] = df_occupation["Pessoas"].where(df_occupation["Pessoas"] >= 16, 0)
 
-            chart_long = df_occupation.melt(
-                id_vars=["Hora"],
-                value_vars=["Verde (<16)", "Vermelho (>=16)"],
-                var_name="Faixa",
-                value_name="Total",
-            )
-            occupation_chart = (
-                alt.Chart(chart_long)
-                .mark_bar()
-                .encode(
-                    x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
-                    y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
-                    color=alt.Color(
-                        "Faixa:N",
-                        scale=alt.Scale(
-                            domain=["Verde (<16)", "Vermelho (>=16)"],
-                            range=[THEME["chart_ok"], THEME["chart_over"]],
-                        ),
-                        legend=alt.Legend(title=None),
-                    ),
-                    tooltip=["Hora:N", "Faixa:N", "Total:Q"],
+                chart_long = df_occupation.melt(
+                    id_vars=["Hora"],
+                    value_vars=["Verde (<16)", "Vermelho (>=16)"],
+                    var_name="Faixa",
+                    value_name="Total",
                 )
-                .properties(height=280)
-            )
-            st.altair_chart(occupation_chart, use_container_width=True)
+                occupation_chart = (
+                    alt.Chart(chart_long)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Hora:N", sort=suggested_times, title="Hora"),
+                        y=alt.Y("Total:Q", stack="zero", scale=alt.Scale(domain=[0, 20]), title="Pessoas"),
+                        color=alt.Color(
+                            "Faixa:N",
+                            scale=alt.Scale(
+                                domain=["Verde (<16)", "Vermelho (>=16)"],
+                                range=[THEME["chart_ok"], THEME["chart_over"]],
+                            ),
+                            legend=alt.Legend(title=None),
+                        ),
+                        tooltip=["Hora:N", "Faixa:N", "Total:Q"],
+                    )
+                    .properties(height=280)
+                )
+                st.altair_chart(occupation_chart, use_container_width=True)
 
-            for row in occupation_data:
-                if row["Pessoas"] >= 16:
-                    pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
-                    pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
-                    show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
+                for row in occupation_data:
+                    if row["Pessoas"] >= 16:
+                        pessoas_num = pd.to_numeric(row.get("Pessoas"), errors="coerce")
+                        pessoas_total = int(pessoas_num) if pd.notna(pessoas_num) else 0
+                        show_pink_alert(f"{row['Hora']} → {pessoas_total} pessoas")
 
-            st.subheader(" Total de Pequenos-Almoços (dia)")
-            st.metric("Total de pessoas", total_pa_dia)
+                st.subheader(" Total de Pequenos-Almoços (dia)")
+                st.metric("Total de pessoas", total_pa_dia)
 
-            st.divider()
+                st.divider()
         else:
             reservas_df = st.session_state.get("reservas_df")
             if reservas_df is None or reservas_df.empty:
