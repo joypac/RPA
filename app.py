@@ -508,15 +508,9 @@ def data_referencia_checklist(df=None):
 
 
 def load_saidas_checklist(df=None):
-    """Carrega checklist guardada. Se for de outro período de trabalho, devolve {}."""
+    """Carrega checklist guardada."""
     def _parse(data):
         if not isinstance(data, dict):
-            return {}
-        saved_date = data.get("_date")
-        ref_date = data_referencia_checklist(df)
-        if hasattr(ref_date, 'isoformat'):
-            ref_date = ref_date.isoformat()
-        if saved_date != ref_date:
             return {}
         return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
 
