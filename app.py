@@ -2732,6 +2732,20 @@ if not df_final.empty:
                         tags.append(nota_texto)
                     sufixo = f" ({'; '.join(tags)})" if tags else ""
                     linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
+            # PA sem hora definida
+            if df_reservas is not None and not df_reservas.empty:
+                _hora_v = df_reservas["Hora PA"].isna() | (df_reservas["Hora PA"].astype(str).str.strip().isin(["", "None", "nan"]))
+                _pago_v = df_reservas["PA pago"].apply(lambda v: str(v).strip().lower() in ["sim", "yes", "s"])
+                _df_sem_hora = df_reservas[_pago_v & _hora_v]
+                if not _df_sem_hora.empty:
+                    linhas.append(bold("Hora por confirmar"))
+                    for _, r in _df_sem_hora.iterrows():
+                        nome = r["Nome"]
+                        aloj = r["Alojamento"]
+                        unidade = unidade_curta(r["Unidade"])
+                        pax_num = pd.to_numeric(r.get("Pessoas"), errors="coerce")
+                        pax = int(pax_num) if pd.notna(pax_num) else 0
+                        linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax (hora por confirmar)")
             total_pax = total_pessoas_col(df_pa)
             linhas.append(bold(f"Total de pessoas: {total_pax}"))
 
@@ -2850,7 +2864,15 @@ if not df_final.empty:
 
     df_pa = edited_df.copy()
     df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
+    _pa_pago_sem_hora = edited_df["PA pago"].apply(lambda v: str(v).strip().lower() in ["sim", "yes", "s"])
+    _hora_vazia = edited_df["Hora PA"].isna() | (edited_df["Hora PA"].astype(str).str.strip().isin(["", "None", "nan"]))
+    df_pa_sem_hora = edited_df[_pa_pago_sem_hora & _hora_vazia].copy()
     with tab_pa:
+        if not df_pa_sem_hora.empty:
+            nomes_sem_hora = ", ".join(
+                f"{r['Nome']} ({r['Alojamento']})" for _, r in df_pa_sem_hora.iterrows()
+            )
+            st.warning(f"PA sem hora definida: {nomes_sem_hora}")
         reservas_df = st.session_state.get("reservas_df")
         if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
             df_pa = df_pa.sort_values("Hora PA")
