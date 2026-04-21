@@ -2104,16 +2104,16 @@ with tab_saidas:
                     f"</div>", unsafe_allow_html=True)
         col1, col2 = st.columns([1, 5])
         # Inicializa o estado ANTES do botão
-        # Se a sugestão for True, aplica sempre (reserva detetada); se False, só inicializa se ainda não existir
+        # Auto-detecta apenas quando o widget state não existe (após import/reset)
+        # Se já existe, respeita o valor manual do utilizador
         for quarto in quartos:
             key = f"saida_{alojamento}_{quarto}"
-            sugerida = tem_saida_sugerida(alojamento, quarto)
-            if sugerida:
-                st.session_state["saidas_checklist"][key] = True
-                st.session_state[key] = True
+            if key not in st.session_state:
+                sugerida = tem_saida_sugerida(alojamento, quarto)
+                st.session_state["saidas_checklist"][key] = bool(sugerida)
+                st.session_state[key] = bool(sugerida)
             elif key not in st.session_state["saidas_checklist"]:
-                st.session_state["saidas_checklist"][key] = False
-                st.session_state[key] = False
+                st.session_state["saidas_checklist"][key] = bool(st.session_state[key])
 
         # Se a flag de marcar todos deste alojamento estiver ativa, marca todos e limpa a flag
         marcar_flag = f"marcar_todos_flag_{alojamento}"
