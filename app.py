@@ -460,19 +460,31 @@ def save_notas_gerais(texto):
     _atomic_write_json(NOTAS_GERAIS_FILE, payload)
 
 
+def _supabase_load_id2() -> dict:
+    """Carrega o registo id=2 do Supabase como dict combinado {transfers, saidas_checklist}."""
+    try:
+        resp = _supabase_client.table("reservas").select("data").eq("id", 2).execute()
+        if resp.data:
+            data = resp.data[0]["data"]
+            if isinstance(data, list):
+                return {"transfers": data, "saidas_checklist": {}}
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {"transfers": [], "saidas_checklist": {}}
+
+
+def _supabase_save_id2(payload: dict):
+    try:
+        _supabase_client.table("reservas").upsert({"id": 2, "data": payload}).execute()
+    except Exception as e:
+        show_pink_alert(f"Erro ao guardar dados: {e}")
+
+
 def load_transfers():
     if USE_SUPABASE:
-        try:
-            resp = _supabase_client.table("reservas").select("data").eq("id", 2).execute()
-            if resp.data:
-                data = resp.data[0]["data"]
-                if isinstance(data, list):
-                    return data
-                if isinstance(data, dict):
-                    return data.get("transfers", [])
-        except Exception:
-            pass
-        return []
+        return _supabase_load_id2().get("transfers", [])
     if TRANSFERS_FILE.exists():
         try:
             with TRANSFERS_FILE.open("r", encoding="utf-8") as f:
@@ -485,10 +497,9 @@ def load_transfers():
 
 def save_transfers(transfers):
     if USE_SUPABASE:
-        try:
-            _supabase_client.table("reservas").upsert({"id": 2, "data": transfers}).execute()
-        except Exception as e:
-            show_pink_alert(f"Erro ao guardar transfers: {e}")
+        d = _supabase_load_id2()
+        d["transfers"] = transfers
+        _supabase_save_id2(d)
         return
     _atomic_write_json(TRANSFERS_FILE, transfers)
 
@@ -509,25 +520,18 @@ def data_referencia_checklist(df=None):
 
 def load_saidas_checklist(df=None):
     """Carrega checklist guardada."""
-    def _parse(data):
-        if not isinstance(data, dict):
-            return {}
-        return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
-
     if USE_SUPABASE:
-        try:
-            resp = _supabase_client.table("reservas").select("data").eq("id", 3).execute()
-            if resp.data:
-                return _parse(resp.data[0]["data"])
-        except Exception:
-            pass
-        return {}
+        raw = _supabase_load_id2().get("saidas_checklist", {})
+        return {k: bool(v) for k, v in raw.items() if not k.startswith("_")} if isinstance(raw, dict) else {}
 
     if not SAIDAS_FILE.exists():
         return {}
     try:
         with SAIDAS_FILE.open("r", encoding="utf-8") as f:
-            return _parse(json.load(f))
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
     except Exception:
         pass
     return {}
@@ -537,10 +541,9 @@ def save_saidas_checklist(checklist: dict, df=None):
     payload = {k: bool(v) for k, v in checklist.items() if not k.startswith("_")}
 
     if USE_SUPABASE:
-        try:
-            _supabase_client.table("reservas").upsert({"id": 3, "data": payload}).execute()
-        except Exception as e:
-            st.session_state["_checklist_save_error"] = str(e)
+        d = _supabase_load_id2()
+        d["saidas_checklist"] = payload
+        _supabase_save_id2(d)
         return
     _atomic_write_json(SAIDAS_FILE, payload)
 
@@ -1769,6 +1772,8 @@ if "notas_gerais_pa_editor" not in st.session_state:
     st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
 if "transfers" not in st.session_state:
     st.session_state["transfers"] = load_transfers()
+if "saidas_checklist" not in st.session_state:
+    st.session_state["saidas_checklist"] = load_saidas_checklist()
 
 header_c1, header_c2 = st.columns([4, 1.2])
 with header_c1:
@@ -1801,8 +1806,6 @@ if "reservas_df" not in st.session_state or not isinstance(st.session_state["res
 with tab_saidas:
     st.header("Checklist de Saídas (Limpezas)")
     st.info("Visualize e confirme as saídas previstas para amanhã. Marque/desmarque manualmente conforme necessário.")
-    if st.session_state.get("_checklist_save_error"):
-        st.error(f"Erro ao guardar checklist: {st.session_state.pop('_checklist_save_error')}")
 
     # --- Estrutura fixa dos alojamentos e quartos ---
     CHECKLIST_STRUCTURE = [
