@@ -1163,7 +1163,7 @@ def render_quick_access_tab(df, suggested_times):
             st.markdown("**Quartos disponíveis hoje**")
             _today = datetime.now().date()
             _tomorrow = _today + timedelta(days=1)
-            _hora_opts = ["nenhuma"] + build_suggested_times()
+            _hora_opts = ["nenhuma"] + build_suggested_times() + ["Por confirmar"]
             for _qi, _q in enumerate(quartos_hoje):
                 _badge = ALOJAMENTO_BADGES.get(_q["alojamento"].upper(), "⬜")
                 _preco = _q.get("preco", 0)
@@ -1293,7 +1293,7 @@ def render_quick_access_tab(df, suggested_times):
     st.markdown(f"### {nome_sel}")
     st.success(f"Unidade(s): {quartos_text}")
 
-    hora_options = ["nenhuma"] + suggested_times
+    hora_options = ["nenhuma"] + suggested_times + ["Por confirmar"]
     pago_options = ["Não", "Sim"]
 
     hora_default = str(row.get("Hora PA")) if pd.notna(row.get("Hora PA")) else None
@@ -1415,7 +1415,7 @@ def _render_reservas_editor_impl(suggested_times):
         column_config={
             "Hora PA": st.column_config.SelectboxColumn(
                 "Hora pequeno-almoço",
-                options=suggested_times,
+                options=suggested_times + ["Por confirmar"],
                 required=False,
                 help="Se ficar vazio/cinzento, significa nenhuma hora definida.",
             ),
@@ -1474,7 +1474,7 @@ def _render_reservas_editor_impl(suggested_times):
     current_pago = editor_df.loc[reserva_idx, "PA pago"]
     current_notas = editor_df.loc[reserva_idx, "Notas"] if "Notas" in editor_df.columns else None
 
-    hora_options = ["nenhuma"] + suggested_times
+    hora_options = ["nenhuma"] + suggested_times + ["Por confirmar"]
     pago_options = ["Não", "Sim"]
 
     hora_default = str(current_hora) if pd.notna(current_hora) else None
@@ -1642,7 +1642,7 @@ def _render_reservas_editor_impl(suggested_times):
                 edit_unidade = st.text_input("Unidade", value=str(row_edit.get("Unidade", "") or ""))
 
             ef7, ef8, ef9 = st.columns(3)
-            hora_opts_edit = ["nenhuma"] + suggested_times
+            hora_opts_edit = ["nenhuma"] + suggested_times + ["Por confirmar"]
             hora_atual_edit = str(row_edit.get("Hora PA")) if pd.notna(row_edit.get("Hora PA")) else "nenhuma"
             if hora_atual_edit not in hora_opts_edit:
                 hora_atual_edit = "nenhuma"
@@ -2330,7 +2330,7 @@ with tab_inserir:
         with mf7:
             manual_hora_pa = st.selectbox(
                 "Hora PA",
-                options=["nenhuma"] + build_suggested_times(),
+                options=["nenhuma"] + build_suggested_times() + ["Por confirmar"],
                 index=0,
                 help="Hora do pequeno-almoço.",
             )
@@ -2595,7 +2595,7 @@ if not df_final.empty:
         if "reservas_editor_df" in st.session_state:
             edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
             df_pa = edited_df.copy()
-            df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
+            df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "") & (df_pa["Hora PA"] != "Por confirmar")]
         else:
             df_pa = pd.DataFrame()
 
@@ -2734,9 +2734,7 @@ if not df_final.empty:
                     linhas.append(f"{nome}  {aloj} {unidade} - {pax} pax{sufixo}")
             # PA sem hora definida
             if df_reservas is not None and not df_reservas.empty:
-                _hora_v = df_reservas["Hora PA"].isna() | (df_reservas["Hora PA"].astype(str).str.strip().isin(["", "None", "nan"]))
-                _pago_v = df_reservas["PA pago"].apply(lambda v: str(v).strip().lower() in ["sim", "yes", "s"])
-                _df_sem_hora = df_reservas[_pago_v & _hora_v]
+                _df_sem_hora = df_reservas[df_reservas["Hora PA"] == "Por confirmar"]
                 if not _df_sem_hora.empty:
                     linhas.append(bold("Hora por confirmar"))
                     for _, r in _df_sem_hora.iterrows():
@@ -2863,16 +2861,14 @@ if not df_final.empty:
     edited_df = sanitize_optional_columns(st.session_state["reservas_editor_df"].copy())
 
     df_pa = edited_df.copy()
-    df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "")]
-    _pa_pago_sem_hora = edited_df["PA pago"].apply(lambda v: str(v).strip().lower() in ["sim", "yes", "s"])
-    _hora_vazia = edited_df["Hora PA"].isna() | (edited_df["Hora PA"].astype(str).str.strip().isin(["", "None", "nan"]))
-    df_pa_sem_hora = edited_df[_pa_pago_sem_hora & _hora_vazia].copy()
+    df_pa = df_pa[df_pa["Hora PA"].notna() & (df_pa["Hora PA"] != "") & (df_pa["Hora PA"] != "Por confirmar")]
+    df_pa_sem_hora = edited_df[edited_df["Hora PA"] == "Por confirmar"].copy()
     with tab_pa:
         if not df_pa_sem_hora.empty:
             nomes_sem_hora = ", ".join(
                 f"{r['Nome']} ({r['Alojamento']})" for _, r in df_pa_sem_hora.iterrows()
             )
-            st.warning(f"PA sem hora definida: {nomes_sem_hora}")
+            st.warning(f"PA por confirmar hora: {nomes_sem_hora}")
         reservas_df = st.session_state.get("reservas_df")
         if reservas_df is not None and not reservas_df.empty and len(df_pa) > 0:
             df_pa = df_pa.sort_values("Hora PA")
