@@ -535,16 +535,12 @@ def load_saidas_checklist(df=None):
 
 def save_saidas_checklist(checklist: dict, df=None):
     payload = {k: bool(v) for k, v in checklist.items() if not k.startswith("_")}
-    ref_date = data_referencia_checklist(df)
-    if hasattr(ref_date, 'isoformat'):
-        ref_date = ref_date.isoformat()
-    payload["_date"] = ref_date
 
     if USE_SUPABASE:
         try:
             _supabase_client.table("reservas").upsert({"id": 3, "data": payload}).execute()
         except Exception as e:
-            show_pink_alert(f"Erro ao guardar checklist: {e}")
+            st.session_state["_checklist_save_error"] = str(e)
         return
     _atomic_write_json(SAIDAS_FILE, payload)
 
@@ -1805,6 +1801,8 @@ if "reservas_df" not in st.session_state or not isinstance(st.session_state["res
 with tab_saidas:
     st.header("Checklist de Saídas (Limpezas)")
     st.info("Visualize e confirme as saídas previstas para amanhã. Marque/desmarque manualmente conforme necessário.")
+    if st.session_state.get("_checklist_save_error"):
+        st.error(f"Erro ao guardar checklist: {st.session_state.pop('_checklist_save_error')}")
 
     # --- Estrutura fixa dos alojamentos e quartos ---
     CHECKLIST_STRUCTURE = [
