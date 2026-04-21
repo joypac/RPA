@@ -2102,6 +2102,10 @@ with tab_saidas:
 
 
 
+    def _on_saida_change(k):
+        st.session_state["saidas_checklist"][k] = st.session_state[k]
+        save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
+
     for alojamento, quartos in CHECKLIST_STRUCTURE:
         # Extrai a chave base do alojamento para cor
         if alojamento.startswith("FOZ"):
@@ -2159,29 +2163,18 @@ with tab_saidas:
                 st.session_state[marcar_flag] = True
                 st.rerun()
         with col2:
-            changed = False
             for quarto in quartos:
                 key = f"saida_{alojamento}_{quarto}"
                 fica = tem_fica(alojamento, quarto)
-                label = (
-                    f'{quarto} \u00a0\u2014\u00a0 <span style="'
-                    f'background:#e8f4fd;color:#1a6fa0;font-size:0.8em;font-weight:600;'
-                    f'padding:1px 6px;border-radius:4px;border:1px solid #9ecfed;">Fica</span>'
-                    if fica else quarto
-                )
-                new_val = st.checkbox(
-                    label if not fica else quarto,
-                    value=st.session_state["saidas_checklist"][key],
+                st.checkbox(
+                    quarto,
                     key=key,
+                    on_change=_on_saida_change,
+                    args=(key,),
                     help="Hóspede fica esta noite — marcar só se necessário limpar." if fica else None,
                 )
                 if fica:
                     st.caption("Fica esta noite")
-                if new_val != st.session_state["saidas_checklist"][key]:
-                    st.session_state["saidas_checklist"][key] = new_val
-                    changed = True
-            if changed:
-                save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
 
     st.divider()
 
