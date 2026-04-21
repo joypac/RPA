@@ -710,8 +710,11 @@ def build_occupation_data(df_pa, suggested_times):
         occupation = 0
         for _, person_row in df_pa.iterrows():
             person_time_str = person_row["Hora PA"]
-            if person_time_str:
-                person_time = datetime.strptime(person_time_str, "%H:%M")
+            if person_time_str and person_time_str != "Por confirmar":
+                try:
+                    person_time = datetime.strptime(person_time_str, "%H:%M")
+                except ValueError:
+                    continue
                 person_end = person_time + timedelta(minutes=45)
                 if person_time <= time_obj < person_end:
                     pessoas_val = pd.to_numeric(person_row.get("Pessoas"), errors="coerce")
