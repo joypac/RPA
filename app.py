@@ -509,17 +509,31 @@ def data_referencia_checklist(df=None):
 
 def load_saidas_checklist(df=None):
     """Carrega checklist guardada. Se for de outro período de trabalho, devolve {}."""
+    def _parse(data):
+        if not isinstance(data, dict):
+            return {}
+        saved_date = data.get("_date")
+        ref_date = data_referencia_checklist(df)
+        if hasattr(ref_date, 'isoformat'):
+            ref_date = ref_date.isoformat()
+        if saved_date != ref_date:
+            return {}
+        return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
+
+    if USE_SUPABASE:
+        try:
+            resp = _supabase_client.table("reservas").select("data").eq("id", 3).execute()
+            if resp.data:
+                return _parse(resp.data[0]["data"])
+        except Exception:
+            pass
+        return {}
+
     if not SAIDAS_FILE.exists():
         return {}
     try:
         with SAIDAS_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            saved_date = data.get("_date")
-            ref_date = data_referencia_checklist(df)
-            if saved_date != ref_date:
-                return {}
-            return {k: bool(v) for k, v in data.items() if not k.startswith("_")}
+            return _parse(json.load(f))
     except Exception:
         pass
     return {}
@@ -531,6 +545,13 @@ def save_saidas_checklist(checklist: dict, df=None):
     if hasattr(ref_date, 'isoformat'):
         ref_date = ref_date.isoformat()
     payload["_date"] = ref_date
+
+    if USE_SUPABASE:
+        try:
+            _supabase_client.table("reservas").upsert({"id": 3, "data": payload}).execute()
+        except Exception as e:
+            show_pink_alert(f"Erro ao guardar checklist: {e}")
+        return
     _atomic_write_json(SAIDAS_FILE, payload)
 
 
