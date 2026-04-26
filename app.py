@@ -2098,7 +2098,9 @@ with tab_saidas:
 
 
     def _on_saida_change(k):
-        st.session_state["saidas_checklist"][k] = st.session_state[k]
+        checklist = st.session_state.setdefault("saidas_checklist", {})
+        valor = st.session_state.get(k, checklist.get(k, False))
+        checklist[k] = bool(valor)
         save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
 
     for alojamento, quartos in CHECKLIST_STRUCTURE:
