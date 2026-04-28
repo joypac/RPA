@@ -5,7 +5,6 @@ import altair as alt
 from datetime import datetime, timedelta, date
 import json
 import html
-import hmac
 from pathlib import Path
 import os
 
@@ -14,33 +13,6 @@ st.set_page_config(
     page_icon="🌅",
     layout="wide",
 )
-
-SITE_PASSWORD = st.secrets.get("SITE_PASSWORD", "Almograve2026")
-AUTH_ENABLED = False
-
-
-def require_password():
-    if not AUTH_ENABLED or st.session_state.get("is_authenticated", False):
-        return
-
-    st.title("Acesso protegido")
-    st.write("Insere a palavra-passe para entrar na aplicação.")
-
-    with st.form("login_form"):
-        typed_password = st.text_input("Palavra-passe", type="password")
-        login_submit = st.form_submit_button("Entrar")
-
-    if login_submit:
-        if hmac.compare_digest(str(typed_password), str(SITE_PASSWORD)):
-            st.session_state["is_authenticated"] = True
-            st.rerun()
-        else:
-            st.error("Palavra-passe incorreta.")
-
-    st.stop()
-
-
-require_password()
 
 # Painel central de cores: muda apenas aqui para atualizar todo o visual.
 
@@ -537,15 +509,51 @@ def load_saidas_checklist(df=None):
     return {}
 
 
-def save_saidas_checklist(checklist: dict, df=None):
+def load_saidas_manual_overrides(df=None):
+    """Carrega chaves manualmente alteradas pelo utilizador.
+    Compatibilidade retroativa: se não existir metadata, assume todas as chaves guardadas como manuais.
+    """
+    raw = {}
+
+    if USE_SUPABASE:
+        maybe_raw = _supabase_load_id2().get("saidas_checklist", {})
+        raw = maybe_raw if isinstance(maybe_raw, dict) else {}
+    elif SAIDAS_FILE.exists():
+        try:
+            with SAIDAS_FILE.open("r", encoding="utf-8") as f:
+                maybe_raw = json.load(f)
+            raw = maybe_raw if isinstance(maybe_raw, dict) else {}
+        except Exception:
+            raw = {}
+
+    if not raw:
+        return set()
+
+    manual_meta = raw.get("_manual_overrides")
+    if isinstance(manual_meta, list):
+        return {str(k) for k in manual_meta if isinstance(k, str)}
+
+    # Fallback para versões antigas sem metadata explícita.
+    return {str(k) for k in raw.keys() if isinstance(k, str) and not k.startswith("_")}
+
+
+def save_saidas_checklist(checklist: dict, df=None, manual_overrides=None):
     payload = {k: bool(v) for k, v in checklist.items() if not k.startswith("_")}
+
+    if manual_overrides is None:
+        manual_overrides = st.session_state.get("saidas_manual_overrides", set())
+    if not isinstance(manual_overrides, (set, list, tuple)):
+        manual_overrides = set()
+
+    payload_with_meta = payload.copy()
+    payload_with_meta["_manual_overrides"] = sorted({str(k) for k in manual_overrides})
 
     if USE_SUPABASE:
         d = _supabase_load_id2()
-        d["saidas_checklist"] = payload
+        d["saidas_checklist"] = payload_with_meta
         _supabase_save_id2(d)
         return
-    _atomic_write_json(SAIDAS_FILE, payload)
+    _atomic_write_json(SAIDAS_FILE, payload_with_meta)
 
 
 def refresh_data_from_storage():
@@ -567,6 +575,7 @@ def refresh_data_from_storage():
     st.session_state["notas_gerais_pa"] = load_notas_gerais()
     st.session_state["notas_gerais_pa_editor"] = st.session_state["notas_gerais_pa"]
     st.session_state["saidas_checklist"] = load_saidas_checklist(refreshed_reservas)
+    st.session_state["saidas_manual_overrides"] = load_saidas_manual_overrides(refreshed_reservas)
     st.session_state["transfers"] = load_transfers()
 
 
@@ -1774,6 +1783,8 @@ if "transfers" not in st.session_state:
     st.session_state["transfers"] = load_transfers()
 if "saidas_checklist" not in st.session_state:
     st.session_state["saidas_checklist"] = load_saidas_checklist()
+if "saidas_manual_overrides" not in st.session_state:
+    st.session_state["saidas_manual_overrides"] = load_saidas_manual_overrides()
 
 header_c1, header_c2 = st.columns([4, 1.2])
 with header_c1:
@@ -1841,21 +1852,20 @@ with tab_saidas:
     # --- Carregar dados de reservas para sugerir saídas ---
 
     reservas_df = st.session_state.get("reservas_df")
-    # Data de referência: checkout mais frequente nos dados inseridos, ou hoje se não houver dados
+    # Data de referência: check-in mais frequente nos dados inseridos, ou hoje se não houver dados
     def data_referencia_checklist(df=None):
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             return date.today()
         try:
-            checkouts = pd.to_datetime(df["Check-out"], errors="coerce").dropna()
-            if checkouts.empty:
+            checkins = pd.to_datetime(df["Check-in"], errors="coerce").dropna()
+            if checkins.empty:
                 return date.today()
-            return checkouts.dt.date.mode()[0]
+            return checkins.dt.date.mode()[0]
         except Exception:
             return date.today()
 
     hoje = data_referencia_checklist(reservas_df)
     amanha = hoje + timedelta(days=1)
-    ontem = hoje - timedelta(days=1)
 
     # Função para identificar se há saída prevista para o quarto
     import re
@@ -1956,7 +1966,8 @@ with tab_saidas:
             try:
                 checkin = pd.to_datetime(row["Check-in"]).date() if pd.notna(row.get("Check-in")) else None
                 checkout = pd.to_datetime(row["Check-out"]).date() if pd.notna(row.get("Check-out")) else None
-                if checkout != hoje or checkin is None:
+                # Saída automática: check-in no dia de referência e check-out no dia seguinte.
+                if checkin != hoje or checkout != amanha:
                     continue
 
                 aloj_row = norm(str(row.get("Alojamento", "")))
@@ -2099,9 +2110,15 @@ with tab_saidas:
 
     def _on_saida_change(k):
         checklist = st.session_state.setdefault("saidas_checklist", {})
+        manual_overrides = st.session_state.setdefault("saidas_manual_overrides", set())
         valor = st.session_state.get(k, checklist.get(k, False))
         checklist[k] = bool(valor)
-        save_saidas_checklist(st.session_state["saidas_checklist"], st.session_state.get("reservas_editor_df"))
+        manual_overrides.add(k)
+        save_saidas_checklist(
+            st.session_state["saidas_checklist"],
+            st.session_state.get("reservas_editor_df"),
+            manual_overrides=manual_overrides,
+        )
 
     for alojamento, quartos in CHECKLIST_STRUCTURE:
         # Extrai a chave base do alojamento para cor
@@ -2128,30 +2145,35 @@ with tab_saidas:
                     f"{alojamento}"
                     f"</div>", unsafe_allow_html=True)
         col1, col2 = st.columns([1, 5])
-        # Inicializa o estado ANTES do botão
-        # Auto-detecta apenas quando o widget state não existe (após import/reset)
-        # Se já existe, respeita o valor manual do utilizador
+        # Inicializa o estado ANTES do botão.
+        # Recalcula apenas os itens não alterados manualmente.
         for quarto in quartos:
             key = f"saida_{alojamento}_{quarto}"
-            if key not in st.session_state:
-                if key in st.session_state["saidas_checklist"]:
-                    # Restaura valor guardado (Supabase) sem auto-detectar
-                    st.session_state[key] = st.session_state["saidas_checklist"][key]
-                else:
-                    # Sem valor guardado — auto-detecta
-                    sugerida = tem_saida_sugerida(alojamento, quarto)
-                    st.session_state["saidas_checklist"][key] = bool(sugerida)
-                    st.session_state[key] = bool(sugerida)
-            elif key not in st.session_state["saidas_checklist"]:
-                st.session_state["saidas_checklist"][key] = bool(st.session_state[key])
+            manual_overrides = st.session_state.setdefault("saidas_manual_overrides", set())
+
+            if key in manual_overrides:
+                if key not in st.session_state["saidas_checklist"]:
+                    st.session_state["saidas_checklist"][key] = bool(st.session_state.get(key, False))
+                st.session_state[key] = bool(st.session_state["saidas_checklist"][key])
+            else:
+                sugerida = bool(tem_saida_sugerida(alojamento, quarto))
+                st.session_state["saidas_checklist"][key] = sugerida
+                st.session_state[key] = sugerida
 
         # Se a flag de marcar todos deste alojamento estiver ativa, marca todos e limpa a flag
         marcar_flag = f"marcar_todos_flag_{alojamento}"
         if st.session_state.get(marcar_flag, False):
+            manual_overrides = st.session_state.setdefault("saidas_manual_overrides", set())
             for quarto in quartos:
                 key = f"saida_{alojamento}_{quarto}"
                 st.session_state["saidas_checklist"][key] = True
                 st.session_state[key] = True  # atualiza também o estado do widget diretamente
+                manual_overrides.add(key)
+            save_saidas_checklist(
+                st.session_state["saidas_checklist"],
+                st.session_state.get("reservas_editor_df"),
+                manual_overrides=manual_overrides,
+            )
             st.session_state[marcar_flag] = False
 
         with col1:
@@ -2560,11 +2582,22 @@ if import_submit and all_data:
     df_final = sanitize_optional_columns(df_final)
     df_final = normalize_pessoas_column(df_final)
     st.session_state["reservas_df"] = df_final
+    st.session_state["reservas_editor_df"] = df_final.copy()
     save_reservas(df_final)
     # Reset completo após importação — limpa widget states para forçar re-detecção
     for _k in [k for k in st.session_state if isinstance(k, str) and k.startswith("saida_")]:
         del st.session_state[_k]
     st.session_state["saidas_checklist"] = {}
+    st.session_state["saidas_manual_overrides"] = set()
+    save_saidas_checklist({}, df_final, manual_overrides=set())
+
+    if novas_reservas_count > 0:
+        st.success(f"{novas_reservas_count} reservas adicionadas.")
+    if reservas_atualizadas_count > 0:
+        st.info(f"{reservas_atualizadas_count} reservas atualizadas.")
+    if novas_reservas_count == 0 and reservas_atualizadas_count == 0:
+        st.info("Importação concluída: sem novas reservas ou alterações.")
+
     _import_conflicts = detect_conflicts(df_final)
     if _import_conflicts:
         st.warning(f"**{len(_import_conflicts)} conflito(s) detectado(s) após importação:**")
@@ -2993,7 +3026,16 @@ with tab_importar:
                 st.session_state["notas_gerais_pa"] = ""
                 st.session_state.pop("notas_gerais_pa_editor", None)
                 st.session_state["saidas_checklist"] = {}
+                st.session_state["saidas_manual_overrides"] = set()
                 st.session_state["transfers"] = []
+                st.session_state["pending_overcrowding_messages"] = []
+                st.session_state["show_overcrowding_ack"] = False
+                st.session_state.pop("quick_selected_aloj", None)
+                st.session_state.pop("quick_selected_idx", None)
+                st.session_state.pop("quick_inserir_quarto_idx", None)
+                st.session_state.pop("inserir_selected_quarto_idx", None)
+                st.session_state.pop("delete_reserva_confirm_idx", None)
+                st.session_state.pop("limpar_confirmar_pendente", None)
                 for k in list(st.session_state.keys()):
                     if k.startswith("saida_") or k.startswith("marcar_todos_flag_"):
                         del st.session_state[k]
